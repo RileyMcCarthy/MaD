@@ -42,15 +42,34 @@ typedef enum
     APP_CONTROL_FAULT_ESD_LOWER,
     APP_CONTROL_FAULT_SERVO_COMMUNICATION,
     APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION,
-    /* The carriage is being driven and is not following. Unlike every other
-     * fault here this one LATCHES: it is cleared by an explicit motion-disable
-     * request, not by the condition going away. Disabling motion is what makes
-     * the stall stop being reported, so a self-clearing stall fault would
-     * disable the machine, clear itself, re-enable, and drive into the same jam
-     * moments later, indefinitely. */
+    /* The carriage is being driven and is not following. This one LATCHES: it
+     * is cleared by an explicit motion-disable request, not by the condition
+     * going away. Disabling motion is what makes the stall stop being
+     * reported, so a self-clearing stall fault would disable the machine,
+     * clear itself, re-enable, and drive into the same jam moments later,
+     * indefinitely. */
     APP_CONTROL_FAULT_SERVO_STALL,
+    /* The load cell reads past its rated capacity by more than the overload
+     * margin, in tension or compression (see APP_CONTROL_OVERLOAD_PERCENT).
+     * It latches like the stall, and for the same reason: disabling the drive
+     * lets the load relax, so a live reading would clear the fault it caused. */
+    APP_CONTROL_FAULT_FORCE_OVERLOAD,
     APP_CONTROL_FAULT_COUNT,
 } app_control_fault_E;
+
+/* The values above are the wire's (MaDProtocol.yaml, FaultedReason), so their
+ * ORDER is frozen: a variant is only ever appended. The order in which
+ * simultaneous faults are REPORTED is separate, and lives in app_control.c
+ * (app_control_faultPriority).
+ *
+ * Faults that latch: the four emergency-stop inputs (ESD_POWER, ESD_SWITCH,
+ * ESD_UPPER, ESD_LOWER), SERVO_STALL and FORCE_OVERLOAD. One that occurs while
+ * motion is enabled stays reported after its cause has gone, and the machine
+ * stays disabled, until the operator asks for motion off: nothing brings the
+ * machine back by itself once it has been stopped. With motion already off
+ * the emergency-stop and overload faults follow their inputs, so an
+ * emergency-stop circuit that has no power yet at start-up needs no
+ * acknowledgement once it is powered. */
 
 typedef enum
 {

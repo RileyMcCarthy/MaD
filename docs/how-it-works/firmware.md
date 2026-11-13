@@ -4,7 +4,7 @@ The firmware runs on a **Parallax Propeller 2** and is written in C, compiled
 with the FlexC compiler via PlatformIO. It lives in `Firmware/MaDCore/`.
 
 It is built from ~20 small modules, each prefixed with its layer
-(`app_control.c`, `dev_servo.c`, `IO_protocol.c`, `lib_timer.c`). The map below
+(`app_control.c`, `dev_servo.c`, `IO_SDCard.c`, `lib_timer.c`). The map below
 is the fastest way to see how they fit together — and how a test flows from the
 host all the way down to a motor pulse.
 
@@ -56,11 +56,11 @@ eight cores it runs on. The ★ edges are the spine this page is really about:
     <title>IO_fullDuplexSerial — Buffered full-duplex UART. Queues outbound bytes and drains the hardware RX into per-channel software buffers for other cogs.</title>
     <g class="fw-card"><rect class="fw-card-bg" x="8" y="57.5" width="232" height="117" rx="8"/><text class="fw-card-title" x="20" y="81.5">IO_fullDuplexSerial</text><text class="fw-card-meta" x="20" y="100.5">SERIAL cog · free-run</text><text class="fw-card-body" x="20" y="116.5">Buffered full-duplex UART. Queues</text><text class="fw-card-body" x="20" y="130.5">outbound bytes and drains the hardware</text><text class="fw-card-body" x="20" y="144.5">RX into per-channel software buffers</text><text class="fw-card-body" x="20" y="158.5">for other cogs.</text></g>
   </g>
-  <g class="fw-node fw-node--cmd" tabindex="0" role="img" aria-label="app_messageSlave: The host’s serial port: decodes incoming ProtoEmb messages and answers them by reading or writing the rest of the firmware — state, config, moves, samples. Uses the generated ProtoEmb codec; the older IO_protocol / IO_gcode parsers are off the runtime path.">
+  <g class="fw-node fw-node--cmd" tabindex="0" role="img" aria-label="app_messageSlave: The host’s serial port: decodes incoming ProtoEmb messages and answers them by reading or writing the rest of the firmware — state, config, moves, samples. Uses the generated ProtoEmb codec.">
     <rect class="fw-node-box" x="400" y="169" width="400" height="46" rx="8"/>
     <text class="fw-node-label" x="600" y="186">app_messageSlave</text><text class="fw-node-sub" x="600" y="203">COMMUNICATION cog · 100 Hz</text>
-    <title>app_messageSlave — The host’s serial port: decodes incoming ProtoEmb messages and answers them by reading or writing the rest of the firmware — state, config, moves, samples. Uses the generated ProtoEmb codec; the older IO_protocol / IO_gcode parsers are off the runtime path.</title>
-    <g class="fw-card"><rect class="fw-card-bg" x="8" y="105.5" width="232" height="173" rx="8"/><text class="fw-card-title" x="20" y="129.5">app_messageSlave</text><text class="fw-card-meta" x="20" y="148.5">COMMUNICATION cog · 100 Hz</text><text class="fw-card-body" x="20" y="164.5">The host’s serial port: decodes</text><text class="fw-card-body" x="20" y="178.5">incoming ProtoEmb messages and answers</text><text class="fw-card-body" x="20" y="192.5">them by reading or writing the rest of</text><text class="fw-card-body" x="20" y="206.5">the firmware — state, config, moves,</text><text class="fw-card-body" x="20" y="220.5">samples. Uses the generated ProtoEmb</text><text class="fw-card-body" x="20" y="234.5">codec; the older IO_protocol /</text><text class="fw-card-body" x="20" y="248.5">IO_gcode parsers are off the runtime</text><text class="fw-card-body" x="20" y="262.5">path.</text></g>
+    <title>app_messageSlave — The host’s serial port: decodes incoming ProtoEmb messages and answers them by reading or writing the rest of the firmware — state, config, moves, samples. Uses the generated ProtoEmb codec.</title>
+    <g class="fw-card"><rect class="fw-card-bg" x="8" y="119.5" width="232" height="145" rx="8"/><text class="fw-card-title" x="20" y="143.5">app_messageSlave</text><text class="fw-card-meta" x="20" y="162.5">COMMUNICATION cog · 100 Hz</text><text class="fw-card-body" x="20" y="178.5">The host’s serial port: decodes</text><text class="fw-card-body" x="20" y="192.5">incoming ProtoEmb messages and answers</text><text class="fw-card-body" x="20" y="206.5">them by reading or writing the rest of</text><text class="fw-card-body" x="20" y="220.5">the firmware — state, config, moves,</text><text class="fw-card-body" x="20" y="234.5">samples. Uses the generated ProtoEmb</text><text class="fw-card-body" x="20" y="248.5">codec.</text></g>
   </g>
   <g class="fw-node fw-node--hub" tabindex="0" role="img" aria-label="IO_SDCard: Generic SD-channel system: streams packed C structs to/from files via per-channel queues. Holds the test program (binary moves) and the recorded sample log — so a test runs with the host unplugged.">
     <rect class="fw-node-box" x="515" y="247" width="170" height="46" rx="8"/>
@@ -323,12 +323,20 @@ into "motion is off."
 
 - **Faults** force `DISABLED`. They are recomputed from live inputs every tick
   (cog liveness, watchdog, the ESD inputs, the servo loop and force gauge being
-  alive), so they clear when the cause does. The servo stall is the one that
-  latches: only a motion-disable request clears it.
+  alive, the force against 120% of the load cell's capacity). The four ESD
+  faults, `FORCE_OVERLOAD` and `SERVO_STALL` latch: one seen while motion is
+  enabled stands until a motion-disable request clears it. The rest clear when
+  the cause does. Simultaneous faults are reported cause first, from a table in
+  `app_control.c`, so an ESD input is named ahead of the ESD power it cuts.
 - **Restrictions** select `RESTRICTED`, where `app_motion` caps the feedrate at
   the profile's restricted velocity: machine tension, the end stops, the door
   and, while a test runs, the sample's force and length limits mirrored from
   `app_monitor` (whose flags also make `app_testManagement` stop the test).
+- **Travel limits** are enforced by `app_motion` itself: a move heading into an
+  active end stop is refused or stopped, and its queue dropped, which ends a
+  running test. `ENDSTOP_UPPER` guards decreasing position, `ENDSTOP_LOWER`
+  increasing position. G28 moves off an upper end stop that is already active
+  before it seeks it.
 
 ## Tests run from SD, host-free
 

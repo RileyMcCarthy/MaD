@@ -151,16 +151,21 @@ open, or part of the controller or its sensors has stopped. It forces DISABLED.
 
 A **restriction** means the machine is somewhere it shouldn't stay: on an end
 stop, door open, over a force or length limit. It slows the machine and leaves
-it movable, because refusing to move would strand a sample under load.
+it movable, because refusing to move would strand a sample under load. An end
+stop also stops travel toward it: a move heading into an active end stop is
+stopped and refused, and a move away from it runs.
 
 Both are re-evaluated continuously from the live inputs, so they clear when
-their cause does. One fault is different: a servo stall latches until you
-disable motion, because disabling motion is what makes a stall stop being
-detected.
+their cause does. Six faults are different: the four emergency-stop faults, a
+load cell overload and a servo stall **latch**. One that stops a machine with
+motion enabled stays until you disable motion, so the machine never comes back
+by itself after an emergency stop, and a stall or an overload does not clear
+the moment switching the drive off relieves it.
 
 One consequence is worth knowing. **Enable motion** is a standing request.
-A fault overrides it but doesn't cancel it, so when a fault clears by itself,
-motion returns. Clicking **Disable motion** while faulted cancels the request.
+A fault overrides it but doesn't cancel it, so when a fault that does not
+latch clears by itself, motion returns. Clicking **Disable motion** while
+faulted cancels the request.
 
 [Faults](../troubleshooting/faults.md) and
 [Restrictions](../troubleshooting/restrictions.md) list every one.
@@ -242,6 +247,8 @@ after a restart: the app's **Reboot now**, or a power cycle.
     - a **hardware emergency stop** that removes power from the drive;
     - **faults** that switch motion off whenever a safety input opens or part
       of the controller stops;
+    - **end stops** that stop travel toward them;
+    - an **overload fault** at 120% of the load cell's rated capacity;
     - **restrictions** that slow it at the end stops, with the door open, or
       over a force or length limit;
     - **sample limits** that end a test.

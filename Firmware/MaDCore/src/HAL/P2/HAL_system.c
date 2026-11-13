@@ -13,10 +13,8 @@
 
 void HAL_system_init(void)
 {
-#if PROPELLER_FRAMEWORK == P2LLVM
-    _clkset(_SETFREQ, _CLOCKFREQ);
-    _uart_init(DBG_UART_RX_PIN, DBG_UART_TX_PIN, 230400, 0);
-#endif
+    /* Nothing to set up: the image runs on the clock and debug serial the
+     * FlexC startup code leaves in place. */
 }
 
 void HAL_system_reboot(void)
@@ -26,11 +24,7 @@ void HAL_system_reboot(void)
 
 int HAL_system_startThread(void (*func)(void *), void *arg, void *stack, uint32_t stackSize)
 {
-#ifdef __FLEXC__
     return _cogstart(func, arg, stack, stackSize);
-#else
-    return cogstart(func, (int)(intptr_t)arg, (int *)stack, stackSize);
-#endif
 }
 /**********************************************************************
  * End of File

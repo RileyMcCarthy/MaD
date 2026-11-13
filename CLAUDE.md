@@ -135,7 +135,7 @@ Firmware ↔ UI communicates over serial (2,000,000 baud on hardware) using the 
 
 ## Firmware Naming & File Conventions
 
-Files are prefixed with their layer: `IO_protocol.c`, `dev_servo.c`, `app_control.c`, `lib_timer.c`. Use `src/template.ch` / `src/template.cx` for new files — standard section layout (includes, constants, typedefs, APIs, etc.).
+Files are prefixed with their layer: `IO_SDCard.c`, `dev_servo.c`, `app_control.c`, `lib_timer.c`. Use `src/template.ch` / `src/template.cx` for new files — standard section layout (includes, constants, typedefs, APIs, etc.).
 
 ## CI/CD & Releases
 
@@ -165,7 +165,7 @@ on a closing keyword (`Fixes` / `Closes` / `Resolves`), never on prose like
 ## Key Constraints
 
 - **Firmware layer violations**: Do not include or call low-level MCU headers from APP/DEV/IO — go through HAL (and appropriate HW headers only where HAL already depends on them).
-- **Thread safety**: `IO_protocol` and shared protocol/JSON buffers are not casually thread-safe from multiple cogs — use the project locking patterns where applicable.
+- **Thread safety**: the protocol runtime and its shared buffers are not casually thread-safe from multiple cogs — use the project locking patterns where applicable.
 - **Locking rules**: `lib_staticQueue` (and Library data structures generally) are unsynchronized — the owning module wraps ops in its own HAL lock when its topology needs one (SPSC use is lock-free by contract). HAL locks are **not reentrant**, and a module must **never call another module's API while holding its own lock** (prevents both self-deadlock and cross-cog ABBA deadlocks).
 - **Native vs P2**: `pio test -e native_test` is the host Unity suite. The SIL runs the `MaD` image on the ISS (off the project files' flash, and in the mad-catalog/p2core/p2iss suites), not a host-compiled firmware library. Pointer sizes still differ; a host unit test does not stand in for a P2 build.
 - **SIL concurrency**: Treat the emulator as single-instance — don't run two emulator-backed suites at once.

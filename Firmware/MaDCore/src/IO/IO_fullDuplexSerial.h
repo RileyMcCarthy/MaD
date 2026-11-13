@@ -1,5 +1,5 @@
-#ifndef DEV_FULLDUPLEXSERIAL_H
-#define DEV_FULLDUPLEXSERIAL_H
+#ifndef IO_FULLDUPLEXSERIAL_H
+#define IO_FULLDUPLEXSERIAL_H
 //
 // Created by Riley McCarthy on 25/04/24.
 //
@@ -59,4 +59,4 @@ uint32_t IO_fullDuplexSerial_available(IO_fullDuplexSerial_channel_E channel);
 /**********************************************************************
  * End of File
  **********************************************************************/
-#endif /* DEV_FULLDUPLEXSERIAL_H */
+#endif /* IO_FULLDUPLEXSERIAL_H */

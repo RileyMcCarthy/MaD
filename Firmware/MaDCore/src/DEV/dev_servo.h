@@ -154,7 +154,9 @@ typedef struct
     int32_t kpDen;             /* proportional gain denominator */
     int32_t kiNum;             /* integral gain numerator (1/s^2): cmd += kiNum*∫err/kiDen */
     int32_t kiDen;             /* integral gain denominator (kiNum=0 disables the term) */
-    int32_t integralLimit;     /* counts/s — backstop clamp on the integral contribution.
+    int32_t integralLimit;     /* counts/s — backstop clamp on the integral contribution:
+                                * 10 mm/s, set at init from the profile's encoder
+                                * scale (81920 at 8192 counts/mm, 600 at 60).
                                 * The integral only accumulates once the trajectory
                                 * has held a steady velocity for 3/Kp seconds, and
                                 * not while the command is saturated, so a ramp's
@@ -252,16 +254,19 @@ typedef struct
  **********************************************************************/
 /* @param maxVelocityCounts, maxAccelCounts  Machine-profile limits, in encoder
  *   counts/s and counts/s^2, that OVERRIDE the compile-time defaults for every
- *   channel. Pass <=0 for either to keep the built-in (gentle) fallback. The
+ *   channel. Pass <=0 for either to keep the built-in (gentle) fallback,
+ *   3 mm/s and 30 mm/s^2 at the encoder scale given. The
  *   caller owns the mm->counts conversion (limit_mmps * encoderStepsPerMM),
  *   keeping this module unit-agnostic (see the ENCODER COUNTS note above). *
  * @param encoderStepsPerMM, servoStepsPerMM  Machine-profile scales. Their
  *   ratio is how many encoder counts one step pulse moves the carriage: the
  *   drive is pulsed at the commanded counts/s divided by it. Pass <=0 for
  *   either to assume one count per pulse. encoderStepsPerMM also converts the
- *   stall guard's 2 mm ceiling, 1 mm band and 1 mm travel to counts, and sets
- *   the parking deadband to 1 um (see positionDeadband); <=0 keeps their
- *   8192 counts/mm defaults. */
+ *   stall guard's 2 mm ceiling, 1 mm band and 1 mm travel to counts, sets
+ *   the parking deadband to 1 um (see positionDeadband), and scales the
+ *   integral's 10 mm/s authority, the fallback envelope and the integral
+ *   gate's steady-trajectory threshold; <=0 keeps their 8192 counts/mm
+ *   defaults. */
 void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
                     int32_t encoderStepsPerMM, int32_t servoStepsPerMM);
 /* The loop gains from the machine profile, in thousandths (servoKp, servoKi).

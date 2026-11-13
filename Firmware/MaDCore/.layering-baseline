@@ -19,5 +19,4 @@ IO/Config/IO_SDCard_config.c	app_monitor.h
 IO/Config/IO_SDCard_config.c	app_motion.h
 IO/Config/IO_SDCard_config.c	dev_nvram_machineProfile.h
 IO/IO_SDCard.c	propeller2.h
-IO/IO_gcode.h	app_motion.h
 IO/IO_positionFeedback.c	dev_nvram.h

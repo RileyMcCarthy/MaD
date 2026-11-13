@@ -39,6 +39,7 @@ export enum FaultedReason {
   SERVO_COMMUNICATION,
   FORCE_GAUGE_COMMUNICATION,
   SERVO_STALL,
+  FORCE_OVERLOAD,
   /* Domain-only, past the end of the wire enum: the app sets this when the
    * user disables the machine, and the firmware never sends it. It therefore
    * has to stay LAST -- a new wire variant takes the next ordinal, and if

@@ -68,18 +68,6 @@ bool HAL_GPIO_getActive(HAL_GPIO_channel_E channel)
     }
     return active;
 }
-
-void HAL_GPIO_toggleActive(HAL_GPIO_channel_E channel)
-{
-    if (HAL_GPIO_getActive(channel))
-    {
-        HAL_GPIO_setActive(channel, false);
-    }
-    else
-    {
-        HAL_GPIO_setActive(channel, true);
-    }
-}
 /**********************************************************************
  * End of File
  **********************************************************************/

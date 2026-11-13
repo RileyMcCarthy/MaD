@@ -36,18 +36,6 @@ void HAL_time_waitMs(uint32_t ms);
  */
 void HAL_time_waitUs(uint32_t us);
 
-/**
- * @brief Get raw cycle counter value
- * @return Clock cycles since system start
- */
-uint32_t HAL_time_getCycles(void);
-
-/**
- * @brief Get system clock frequency in Hz
- * @return Clock frequency
- */
-uint32_t HAL_time_getClockFreq(void);
-
 /**********************************************************************
  * End of File
  **********************************************************************/

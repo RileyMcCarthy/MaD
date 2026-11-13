@@ -60,6 +60,9 @@ enums:
       - SERVO_COMMUNICATION
       - FORCE_GAUGE_COMMUNICATION
       - SERVO_STALL
+      # Appended within the enum's four bits, so no protocol_version bump: the
+      # load cell past 120% of its rated capacity, in tension or compression.
+      - FORCE_OVERLOAD
 
   RestrictedReason:
     description: "Motion restriction codes"

@@ -52,7 +52,7 @@ Pointer sizes and timing differ between the Propeller 2 and the host. Run `pio t
 Treat the emulator as single-instance. Don't write tests that assume parallel emulator instances.
 
 ### Concurrency / locking discipline (firmware)
-HAL locks are **not reentrant**, and a module must **never call another module's API while holding its own lock** (prevents self-deadlock and cross-cog ABBA deadlocks). `IO_protocol` and shared protocol/JSON buffers are not casually thread-safe across cogs; `lib_staticQueue` and Library data structures are unsynchronized by contract (lock-free only for SPSC use) — the owning module wraps ops in its own lock when its topology needs one.
+HAL locks are **not reentrant**, and a module must **never call another module's API while holding its own lock** (prevents self-deadlock and cross-cog ABBA deadlocks). The protocol runtime and its shared buffers are not casually thread-safe across cogs; `lib_staticQueue` and Library data structures are unsynchronized by contract (lock-free only for SPSC use) — the owning module wraps ops in its own lock when its topology needs one.
 
 ### Commit and PR conventions
 Commits follow **Conventional Commits with a scope**: `type(scope): subject` — e.g. `feat(protocol):`, `refactor(firmware):`, `test(sil):`, `fix(ci):`, `chore(protocol):`. Keep changes scoped to one area where practical. Branch off `main` rather than committing to it directly. Releases are cut by pushing version tags (`madcontrol-v*` deploys MaD Control + docs to Pages and must match `Software/Control/package.json`; `firmware-v*` and `hardware-v*` cut those releases). Use `Software/Control/scripts/release.sh` rather than tagging MaD Control by hand.

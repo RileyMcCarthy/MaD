@@ -29,16 +29,6 @@ void HAL_time_waitUs(uint32_t us)
 {
     _waitus(us);
 }
-
-uint32_t HAL_time_getCycles(void)
-{
-    return _cnt();
-}
-
-uint32_t HAL_time_getClockFreq(void)
-{
-    return _clockfreq();
-}
 /**********************************************************************
  * End of File
  **********************************************************************/

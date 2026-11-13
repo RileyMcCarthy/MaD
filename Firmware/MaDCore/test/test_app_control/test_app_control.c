@@ -115,6 +115,7 @@ bool dev_forceGauge_isReady(dev_forceGauge_channel_E channel)
 
 /* --- dev_nvram (init only reads the machine profile) --- */
 static int32_t d_nvramMaxForceTensile;
+static int32_t d_nvramLoadCellCapacity; /* mN; overload trips past 120% of it */
 static bool d_nvramGetReturn;
 static int d_nvramGetCalls;
 static dev_nvram_channel_t d_nvramLastChannel;
@@ -127,6 +128,7 @@ bool dev_nvram_getChannelData(dev_nvram_channel_t channel, void *data, size_t si
         MachineProfile mp;
         memset(&mp, 0, sizeof(mp));
         mp.maxForceTensile = d_nvramMaxForceTensile;
+        mp.loadCellCapacity = d_nvramLoadCellCapacity;
         memcpy(data, &mp, sizeof(MachineProfile));
     }
     return d_nvramGetReturn;
@@ -155,6 +157,7 @@ static void doubles_reset(void)
     memset(d_gpio, 0, sizeof(d_gpio));
 
     d_nvramMaxForceTensile = 5000;
+    d_nvramLoadCellCapacity = 100000; /* a 100 N cell: overload past 120 N */
     d_nvramGetReturn = true;
     d_nvramGetCalls = 0;
     d_nvramLastChannel = (dev_nvram_channel_t)0;
@@ -173,6 +176,14 @@ static void control_init(void)
      * because we #include the module and own its storage in this binary). */
     memset(&app_control_data, 0, sizeof(app_control_data));
     app_control_init(HAL_lock_create());
+}
+
+/* control_init() for a machine whose load cell is rated `capacity_mN`. */
+static void control_init_withCapacity(int32_t capacity_mN)
+{
+    control_init();
+    d_nvramLoadCellCapacity = capacity_mN;
+    app_control_init(app_control_data.lock);
 }
 
 /* Run() to a state where motion is enabled, no fault, no restriction → MANUAL,
@@ -824,6 +835,48 @@ static void trip_fault_only(app_control_fault_E fault)
     case APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION:
         d_forceGaugeReady = false;
         break;
+    case APP_CONTROL_FAULT_FORCE_OVERLOAD:
+        d_machineForce = 120001; /* one millinewton past 120% of the 100 N cell */
+        break;
+    case APP_CONTROL_FAULT_NONE:
+    case APP_CONTROL_FAULT_COUNT:
+    default:
+        break;
+    }
+}
+
+/* Trip one more fault source on top of whatever is already tripped. */
+static void trip_fault_also(app_control_fault_E fault)
+{
+    switch (fault)
+    {
+    case APP_CONTROL_FAULT_COG:
+        d_cogAllRunning = false;
+        break;
+    case APP_CONTROL_FAULT_WATCHDOG:
+        d_watchdogAlive = false;
+        break;
+    case APP_CONTROL_FAULT_ESD_POWER:
+        d_gpio[HAL_GPIO_ESD_POWER] = true;
+        break;
+    case APP_CONTROL_FAULT_ESD_SWITCH:
+        d_gpio[HAL_GPIO_ESD_SWITCH] = true;
+        break;
+    case APP_CONTROL_FAULT_ESD_UPPER:
+        d_gpio[HAL_GPIO_ESD_UPPER] = true;
+        break;
+    case APP_CONTROL_FAULT_ESD_LOWER:
+        d_gpio[HAL_GPIO_ESD_LOWER] = true;
+        break;
+    case APP_CONTROL_FAULT_SERVO_COMMUNICATION:
+        d_actuatorReady = false;
+        break;
+    case APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION:
+        d_forceGaugeReady = false;
+        break;
+    case APP_CONTROL_FAULT_FORCE_OVERLOAD:
+        d_machineForce = 120001;
+        break;
     case APP_CONTROL_FAULT_NONE:
     case APP_CONTROL_FAULT_COUNT:
     default:
@@ -836,7 +889,7 @@ void test_m4_each_fault_alone_reported_and_disables(void)
 {
     VIBES_TEST("control.every-fault-alone-disables",
                "src/APP/app_control.c#app_control_run",
-               "each of the eight fault sources tripped in turn, with every other input healthy");
+               "each fault source that can trip with motion off tripped in turn, with every other input healthy");
     VIBES_EXPECT_WHY("fault-named",
                      "the machine names that fault as the reason",
                      "the reported reason is what the operator reads to diagnose a machine that will not move, and each one points at a different part of the machine");
@@ -851,6 +904,7 @@ void test_m4_each_fault_alone_reported_and_disables(void)
         APP_CONTROL_FAULT_ESD_LOWER,
         APP_CONTROL_FAULT_SERVO_COMMUNICATION,
         APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION,
+        APP_CONTROL_FAULT_FORCE_OVERLOAD,
     };
     for (size_t i = 0; i < sizeof(faults) / sizeof(faults[0]); i++)
     {
@@ -880,6 +934,7 @@ void test_m4_enable_refused_for_each_fault(void)
         APP_CONTROL_FAULT_ESD_LOWER,
         APP_CONTROL_FAULT_SERVO_COMMUNICATION,
         APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION,
+        APP_CONTROL_FAULT_FORCE_OVERLOAD,
     };
     for (size_t i = 0; i < sizeof(faults) / sizeof(faults[0]); i++)
     {
@@ -893,65 +948,308 @@ void test_m4_enable_refused_for_each_fault(void)
     }
 }
 
-/* First-fault-wins across consecutive enum pairs (i beats i+1). */
+/* The reporting order, pair by pair: with both of a neighbouring pair tripped,
+ * the one earlier in the order is the reason given. The order is the
+ * module's own, not the enum's: the emergency-stop inputs come before the
+ * emergency-stop power they cut. */
 void test_m4_first_fault_wins_adjacent_pairs(void)
 {
     VIBES_TEST("control.fault-priority-order",
                "src/APP/app_control.c#app_control_run",
-               "each adjacent pair of fault causes tripped at the same time, in turn");
+               "each neighbouring pair of fault causes tripped at the same time, in turn");
     VIBES_EXPECT_WHY("earlier-cause-reported",
-                     "the machine reports the earlier one in a fixed order: stopped core, stalled watchdog, emergency-stop inputs, drive, load cell",
-                     "causes near the front produce the ones behind them, since a dead core also stops the drive answering, so this order names the root cause");
-    /* Pair sources that can be co-asserted via independent doubles. */
-    typedef struct
-    {
-        app_control_fault_E lower;
-        app_control_fault_E higher;
-    } pair_t;
-    static const pair_t pairs[] = {
-        {APP_CONTROL_FAULT_COG, APP_CONTROL_FAULT_WATCHDOG},
-        {APP_CONTROL_FAULT_WATCHDOG, APP_CONTROL_FAULT_ESD_POWER},
-        {APP_CONTROL_FAULT_ESD_POWER, APP_CONTROL_FAULT_ESD_SWITCH},
-        {APP_CONTROL_FAULT_ESD_SWITCH, APP_CONTROL_FAULT_ESD_UPPER},
-        {APP_CONTROL_FAULT_ESD_UPPER, APP_CONTROL_FAULT_ESD_LOWER},
-        {APP_CONTROL_FAULT_ESD_LOWER, APP_CONTROL_FAULT_SERVO_COMMUNICATION},
-        {APP_CONTROL_FAULT_SERVO_COMMUNICATION, APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION},
+                     "the earlier one is reported, in this order: core, watchdog, emergency stop, upper then lower end-of-travel emergency switch, emergency-stop power, drive, load cell link, overload",
+                     "causes near the front produce the ones behind them, since a dead core also stops the drive answering and a pressed emergency stop is what cuts the emergency-stop power, so this order names the root cause");
+    static const app_control_fault_E order[] = {
+        APP_CONTROL_FAULT_COG,
+        APP_CONTROL_FAULT_WATCHDOG,
+        APP_CONTROL_FAULT_ESD_SWITCH,
+        APP_CONTROL_FAULT_ESD_UPPER,
+        APP_CONTROL_FAULT_ESD_LOWER,
+        APP_CONTROL_FAULT_ESD_POWER,
+        APP_CONTROL_FAULT_SERVO_COMMUNICATION,
+        APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION,
+        APP_CONTROL_FAULT_FORCE_OVERLOAD,
     };
-    for (size_t i = 0; i < sizeof(pairs) / sizeof(pairs[0]); i++)
+    for (size_t i = 0; (i + 1U) < (sizeof(order) / sizeof(order[0])); i++)
     {
         control_init();
-        /* Assert both; lower index must win. */
-        trip_fault_only(pairs[i].lower);
-        /* Add the higher fault without clearing the lower. */
-        switch (pairs[i].higher)
-        {
-        case APP_CONTROL_FAULT_WATCHDOG:
-            d_watchdogAlive = false;
-            break;
-        case APP_CONTROL_FAULT_ESD_POWER:
-            d_gpio[HAL_GPIO_ESD_POWER] = true;
-            break;
-        case APP_CONTROL_FAULT_ESD_SWITCH:
-            d_gpio[HAL_GPIO_ESD_SWITCH] = true;
-            break;
-        case APP_CONTROL_FAULT_ESD_UPPER:
-            d_gpio[HAL_GPIO_ESD_UPPER] = true;
-            break;
-        case APP_CONTROL_FAULT_ESD_LOWER:
-            d_gpio[HAL_GPIO_ESD_LOWER] = true;
-            break;
-        case APP_CONTROL_FAULT_SERVO_COMMUNICATION:
-            d_actuatorReady = false;
-            break;
-        case APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION:
-            d_forceGaugeReady = false;
-            break;
-        default:
-            break;
-        }
+        trip_fault_only(order[i]);
+        trip_fault_also(order[i + 1U]);
         app_control_run();
-        TEST_ASSERT_EQUAL_INT(pairs[i].lower, app_control_getFault());
+        TEST_ASSERT_EQUAL_INT(order[i], app_control_getFault());
     }
+}
+
+/**********************************************************************
+ * Emergency-stop faults: the cause before the lost power, and the latch
+ **********************************************************************/
+
+void test_a_pressed_emergency_stop_is_named_over_the_power_it_cuts(void)
+{
+    VIBES_TEST("control.esd-cause-named-over-lost-power",
+               "src/APP/app_control.c#app_control_private_processFaults",
+               "the emergency-stop circuit without power together with, in turn, the emergency stop pressed, the upper end-of-travel emergency switch tripped, and the lower one tripped");
+    VIBES_EXPECT_WHY("input-named",
+                     "the machine names the input that was operated as the reason",
+                     "any of the three opens the relay chain and takes the circuit's power with it, so the lost power is true every time and says nothing about which one to go and look at");
+    static const app_control_fault_E inputs[] = {
+        APP_CONTROL_FAULT_ESD_SWITCH,
+        APP_CONTROL_FAULT_ESD_UPPER,
+        APP_CONTROL_FAULT_ESD_LOWER,
+    };
+    for (size_t i = 0; i < sizeof(inputs) / sizeof(inputs[0]); i++)
+    {
+        control_init();
+        trip_fault_only(APP_CONTROL_FAULT_ESD_POWER);
+        trip_fault_also(inputs[i]);
+        app_control_run();
+        TEST_ASSERT_EQUAL_INT(inputs[i], app_control_getFault());
+    }
+}
+
+void test_the_emergency_stop_is_named_even_when_the_lost_power_is_seen_first(void)
+{
+    VIBES_TEST("control.esd-cause-named-when-power-drops-first",
+               "src/APP/app_control.c#app_control_private_processFaults",
+               "motion enabled, the emergency-stop circuit losing power, and the pressed emergency stop itself read one update later");
+    VIBES_EXPECT_WHY("stop-named",
+                     "from that update on the machine names the emergency stop as the reason",
+                     "the two contacts of one button do not change on the same update, and the reason is chosen afresh each update from everything seen so far");
+    control_init();
+    enableMotion();
+
+    d_gpio[HAL_GPIO_ESD_POWER] = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_ESD_POWER, app_control_getFault());
+
+    d_gpio[HAL_GPIO_ESD_SWITCH] = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_ESD_SWITCH, app_control_getFault());
+}
+
+void test_an_emergency_stop_stays_reported_after_it_is_released(void)
+{
+    VIBES_TEST("control.esd-latches",
+               "src/APP/app_control.c#app_control_private_latching",
+               "motion enabled, then the emergency stop pressed and released again, its circuit back in power");
+    VIBES_EXPECT_WHY("fault-persists",
+                     "the machine still names the emergency stop as its fault",
+                     "the host reads the state once a second, and a press shorter than that would stop a test and leave no reason behind");
+    VIBES_EXPECT_WHY("stays-disabled",
+                     "the machine stays disabled with motion off",
+                     "the request for motion outlives a fault, so without the latch releasing the emergency stop would switch the drive back on with nobody asking for it");
+
+    control_init();
+    enableMotion();
+    d_gpio[HAL_GPIO_ESD_SWITCH] = true;
+    d_gpio[HAL_GPIO_ESD_POWER] = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_ESD_SWITCH, app_control_getFault());
+
+    d_gpio[HAL_GPIO_ESD_SWITCH] = false;
+    d_gpio[HAL_GPIO_ESD_POWER] = false;
+    app_control_run();
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_ESD_SWITCH, app_control_getFault());
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_DISABLED, app_control_data.state);
+    TEST_ASSERT_FALSE(app_control_motionEnabled());
+}
+
+void test_disabling_motion_acknowledges_a_released_emergency_stop(void)
+{
+    VIBES_TEST("control.esd-cleared-by-operator",
+               "src/APP/app_control.c#app_control_private_processRequests",
+               "an emergency stop that stopped the machine and has since been released, and an operator asking for motion off");
+    VIBES_EXPECT("fault-clears", "the fault clears on that request");
+    VIBES_EXPECT_WHY("needs-fresh-enable",
+                     "motion stays off until the operator asks for it again, and that request is then accepted",
+                     "asking for motion off is the acknowledgement, and it withdraws the earlier request for motion with it");
+
+    control_init();
+    enableMotion();
+    d_gpio[HAL_GPIO_ESD_SWITCH] = true;
+    app_control_run();
+    d_gpio[HAL_GPIO_ESD_SWITCH] = false;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_ESD_SWITCH, app_control_getFault());
+
+    TEST_ASSERT_TRUE(app_control_triggerMotionDisabled());
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
+    app_control_run();
+    TEST_ASSERT_FALSE(app_control_motionEnabled());
+
+    TEST_ASSERT_TRUE(app_control_triggerMotionEnabled());
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_MANUAL, app_control_data.state);
+}
+
+void test_an_emergency_stop_still_pressed_keeps_its_fault_through_an_acknowledgement(void)
+{
+    VIBES_TEST("control.esd-still-pressed-keeps-fault",
+               "src/APP/app_control.c#app_control_private_latching",
+               "an emergency stop that stopped the machine and is still pressed, an operator asking for motion off, and the stop released afterwards");
+    VIBES_EXPECT("fault-stays-while-pressed",
+                 "the fault stays and a request to enable motion is refused for as long as the stop is pressed");
+    VIBES_EXPECT_WHY("clears-on-release",
+                     "the fault clears when the stop is released, with no second acknowledgement",
+                     "the operator has already acknowledged it, and with motion off nothing is waiting to come back");
+
+    control_init();
+    enableMotion();
+    d_gpio[HAL_GPIO_ESD_SWITCH] = true;
+    app_control_run();
+
+    TEST_ASSERT_TRUE(app_control_triggerMotionDisabled());
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_ESD_SWITCH, app_control_getFault());
+    TEST_ASSERT_FALSE(app_control_triggerMotionEnabled());
+
+    d_gpio[HAL_GPIO_ESD_SWITCH] = false;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_DISABLED, app_control_data.state);
+}
+
+void test_an_emergency_stop_fault_with_motion_off_follows_its_input(void)
+{
+    VIBES_TEST("control.esd-follows-input-while-motion-off",
+               "src/APP/app_control.c#app_control_private_latching",
+               "a machine with motion off whose emergency-stop circuit has no power, and then has power");
+    VIBES_EXPECT("faults-while-unpowered", "the machine reports the lost power as a fault while it lasts");
+    VIBES_EXPECT_WHY("clears-when-powered",
+                     "the fault clears once the circuit has power, with nothing to acknowledge",
+                     "the circuit has no power at start-up until its reset button is pressed, and nothing was moving for it to stop");
+
+    control_init();
+    d_gpio[HAL_GPIO_ESD_POWER] = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_ESD_POWER, app_control_getFault());
+
+    d_gpio[HAL_GPIO_ESD_POWER] = false;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
+    TEST_ASSERT_TRUE(app_control_triggerMotionEnabled());
+}
+
+/**********************************************************************
+ * Load-cell overload
+ **********************************************************************/
+
+void test_a_force_past_the_overload_margin_faults_the_machine(void)
+{
+    VIBES_TEST("control.overload-faults-in-tension",
+               "src/APP/app_control.c#app_control_private_processFaults",
+               "a 20 newton load cell, motion enabled under manual control, and the force rising in tension to exactly 120 percent of the cell's capacity and then one millinewton past it");
+    VIBES_EXPECT("at-margin-no-fault", "at exactly 120 percent the machine carries on with no fault");
+    VIBES_EXPECT_WHY("past-margin-faults",
+                     "one millinewton past it the machine faults, names the overload and turns motion off",
+                     "the drive can push about twice what a small cell survives, and a jog has no force limit of its own");
+
+    control_init_withCapacity(20000);
+    enableMotion();
+
+    d_machineForce = 24000;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
+    TEST_ASSERT_TRUE(app_control_motionEnabled());
+
+    d_machineForce = 24001;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_FORCE_OVERLOAD, app_control_getFault());
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_DISABLED, app_control_data.state);
+    TEST_ASSERT_FALSE(app_control_motionEnabled());
+}
+
+void test_an_overload_in_compression_faults_the_machine(void)
+{
+    VIBES_TEST("control.overload-faults-in-compression",
+               "src/APP/app_control.c#app_control_private_processFaults",
+               "a 20 newton load cell, motion enabled, and the force going one millinewton past 120 percent of the cell's capacity in compression");
+    VIBES_EXPECT_WHY("faults",
+                     "the machine faults, names the overload and turns motion off",
+                     "driving the jaws together overloads the cell as surely as pulling them apart");
+
+    control_init_withCapacity(20000);
+    enableMotion();
+
+    d_machineForce = -24000;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
+
+    d_machineForce = -24001;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_FORCE_OVERLOAD, app_control_getFault());
+    TEST_ASSERT_FALSE(app_control_motionEnabled());
+}
+
+void test_an_overload_stops_a_running_test(void)
+{
+    VIBES_TEST("control.overload-faults-during-test",
+               "src/APP/app_control.c#app_control_private_processFaults",
+               "a 20 newton load cell and a test running, with the force going past 120 percent of the cell's capacity");
+    VIBES_EXPECT_WHY("faults",
+                     "the machine faults on the overload and turns motion off",
+                     "a test's own force limit belongs to the sample and may be set above what the cell can take");
+
+    control_init_withCapacity(20000);
+    enableMotion();
+    d_testRunning = true;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_TEST, app_control_data.state);
+
+    d_machineForce = 25000;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_FORCE_OVERLOAD, app_control_getFault());
+    TEST_ASSERT_FALSE(app_control_motionEnabled());
+}
+
+void test_an_overload_stays_reported_after_the_load_relaxes(void)
+{
+    VIBES_TEST("control.overload-latches",
+               "src/APP/app_control.c#app_control_private_latching",
+               "an overload that stopped the machine, the force then falling back to zero, and later an operator asking for motion off");
+    VIBES_EXPECT_WHY("fault-persists",
+                     "the machine stays faulted on the overload, with motion off, while the force is back at zero",
+                     "stopping the drive is what lets the load relax, so a fault taken from the live reading would clear itself and switch the drive back on against the same load");
+    VIBES_EXPECT("cleared-by-operator", "the fault clears when the operator asks for motion off, and motion can then be enabled again");
+
+    control_init_withCapacity(20000);
+    enableMotion();
+    d_machineForce = 30000;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_FORCE_OVERLOAD, app_control_getFault());
+
+    d_machineForce = 0;
+    app_control_run();
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_FORCE_OVERLOAD, app_control_getFault());
+    TEST_ASSERT_FALSE(app_control_motionEnabled());
+
+    TEST_ASSERT_TRUE(app_control_triggerMotionDisabled());
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
+    TEST_ASSERT_TRUE(app_control_triggerMotionEnabled());
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_STATE_MANUAL, app_control_data.state);
+}
+
+void test_a_profile_without_a_cell_capacity_has_no_overload_check(void)
+{
+    VIBES_TEST("control.overload-needs-a-capacity",
+               "src/APP/app_control.c#app_control_init",
+               "a machine profile that gives no load cell capacity, and a very large force reading");
+    VIBES_EXPECT_WHY("no-fault",
+                     "no overload fault is raised",
+                     "the limit is a share of the capacity, and with none given every reading would be over it and the machine could never be enabled to set one");
+
+    control_init_withCapacity(0);
+    enableMotion();
+    d_machineForce = 2000000;
+    app_control_run();
+    TEST_ASSERT_EQUAL_INT(APP_CONTROL_FAULT_NONE, app_control_getFault());
+    TEST_ASSERT_TRUE(app_control_motionEnabled());
 }
 
 /* Active (non-commented) restrictions each alone → RESTRICTED when motion on. */
@@ -1158,6 +1456,17 @@ int main(void)
     RUN_TEST(test_m4_each_fault_alone_reported_and_disables);
     RUN_TEST(test_m4_enable_refused_for_each_fault);
     RUN_TEST(test_m4_first_fault_wins_adjacent_pairs);
+    RUN_TEST(test_a_pressed_emergency_stop_is_named_over_the_power_it_cuts);
+    RUN_TEST(test_the_emergency_stop_is_named_even_when_the_lost_power_is_seen_first);
+    RUN_TEST(test_an_emergency_stop_stays_reported_after_it_is_released);
+    RUN_TEST(test_disabling_motion_acknowledges_a_released_emergency_stop);
+    RUN_TEST(test_an_emergency_stop_still_pressed_keeps_its_fault_through_an_acknowledgement);
+    RUN_TEST(test_an_emergency_stop_fault_with_motion_off_follows_its_input);
+    RUN_TEST(test_a_force_past_the_overload_margin_faults_the_machine);
+    RUN_TEST(test_an_overload_in_compression_faults_the_machine);
+    RUN_TEST(test_an_overload_stops_a_running_test);
+    RUN_TEST(test_an_overload_stays_reported_after_the_load_relaxes);
+    RUN_TEST(test_a_profile_without_a_cell_capacity_has_no_overload_check);
     RUN_TEST(test_m4_each_active_restriction_alone);
     RUN_TEST(test_m4_sample_restrictions_inactive_when_not_running);
     RUN_TEST(test_m4_sample_tension_restricts_while_test_running);
