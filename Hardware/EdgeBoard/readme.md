@@ -18,10 +18,12 @@ from earlier files carry no revision text; the changelog below lists what differ
 - **Encoder input** (J20): isolated quadrature receiver for the drive's encoder.
 - **Endstops** and the **door interlock** / e-stop chain (J11-J18, current-loop
   inputs through optocouplers).
-- **Host link: J1.** The control app talks to the P2 through a Parallax Prop Plug
-  on J1 (P62/P63/RESn/GND, silkscreen `G|RES|RX|TX`, 2,000,000 baud). The carrier
-  has no USB-to-serial chip of its own.
-- **Raspberry Pi link** (J4, isolated through IC2), optional.
+- **Control port: J4.** The control app talks to the P2 on P30 (RX) / P32 (TX),
+  isolated through IC2, at 2,000,000 baud. The carrier has no USB-to-serial chip
+  of its own.
+- **Programming port: J1.** A Parallax Prop Plug on J1 (P62/P63/RESn/GND,
+  silkscreen `G|RES|RX|TX`) flashes the firmware and carries its debug log. It
+  does not carry the protocol.
 - Header for the [DS2 Addon](../DS2Addon/readme.md) force-gauge interface.
 
 ## Encoder input (J20) and its jumpers
@@ -431,7 +433,8 @@ surface (read: NSI50010Y/D p.3 note).
 Done in the same PR (commit 94ed68d):
 
 - `Firmware/MaDCore/src/HAL/Include/HW_pins.h`: `HW_PIN_RPI_TX` 55 → **32** and
-  `HW_PIN_RPI_RX` 53 → **30**, with the SIL's host pins to match.
+  `HW_PIN_RPI_RX` 53 → **30**, with the SIL's host pins to match (since renamed
+  `HW_PIN_MAIN_TX` / `HW_PIN_MAIN_RX`).
 
 Still to do:
 

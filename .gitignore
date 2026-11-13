@@ -49,10 +49,9 @@ playwright-report/
 .env
 .env.local
 .env.*.local
-Hardware/DS2Addon/KICAD/jlcpcb/project.db
 # KiCad's automatic project backups
 **/*-backups/
-Hardware/DS2Addon/KICAD/jlcpcb/production_files/GERBER-DS2_Addon.zip
+Hardware/**/jlcpcb/
 
 # Local scratch notes / Claude memories (not committed)
 notes/

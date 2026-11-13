@@ -33,7 +33,7 @@ Everything you need to build, run, test, and extend MaD.
 | [`wasm-pack`](https://rustwasm.github.io/wasm-pack/) | latest | Building the app's WASM core |
 | [Python](https://www.python.org/) | 3.8+ | The protocol generator and the docs site |
 | [PlatformIO](https://platformio.org/) | 6.x+ | Building the firmware |
-| [KiCad](https://www.kicad.org/) | 9+ | Hardware (optional) |
+| [KiCad](https://www.kicad.org/) | 9 | Hardware (optional) |
 
 Rust, `wasm-pack`, and Python are only needed if you're building the app or
 running SIL; PlatformIO only if you're building firmware.
