@@ -43,7 +43,7 @@ In the order they appear.
 | **Name** | A label for this machine |
 | **Encoder (step/mm)** | Encoder counts per millimetre of travel |
 | **Servo (step/mm)** | Drive pulses per millimetre of travel |
-| **Load Cell Capacity (N)** | The load cell's rated force, from its datasheet |
+| **Load Cell Capacity (N)** | The load cell's rated force, from its datasheet. The machine stops with a [`FORCE_OVERLOAD`](../troubleshooting/faults.md#force_overload) fault when the force passes 120% of this value, in tension or compression. **0 switches that check off.** The default, 100 N, only trips at 120 N: a smaller cell, such as a 2 kg (about 19.6 N) one, is protected only once its real capacity is entered here. |
 | **Load Cell Sensitivity (mV/V)** | The load cell's output at capacity, per volt of excitation. Start from the datasheet's rated output; the [load cell calibration](load-cell-calibration.md#sensitivity-from-known-weights) measures it. |
 | **Load Cell Zero Balance (mV/V)** | What the load cell reads with nothing on it. The [load cell calibration](load-cell-calibration.md#zero-and-noise) measures it. |
 | **Position Max (mm)** | How far the carriage is allowed to travel |
