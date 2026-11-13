@@ -43,6 +43,13 @@ This is a [KiCad](https://www.kicad.org/) project (under `KICAD/`). Open the
 CI job and published on `hardware-v*` tags — see the
 [CI/CD docs](https://rileymccarthy.github.io/MaD/dev/ci-cd-and-releases/).
 
+### Rev 2 (pcbc)
+
+`pcbc/ds2_addon.py` is an in-progress rev 2 of this board, described in Python
+and compiled to KiCad files by the pcbc tool (KiCad 10 format, under
+`pcbc/layout/`). It has not been fabricated and CI does not build it. `KICAD/`
+remains the fabricated rev 1 and the source for CI and releases.
+
 ## Documentation
 
 See the

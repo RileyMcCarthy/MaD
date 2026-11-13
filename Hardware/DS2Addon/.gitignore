@@ -74,5 +74,4 @@ gerbers/
 *.backup
 
 # KiCad project settings
-*.kicad_prl
 *.kicad_pro.user
