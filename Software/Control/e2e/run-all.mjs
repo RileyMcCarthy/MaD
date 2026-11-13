@@ -133,6 +133,7 @@ import {
   resampledPathMm,
   assertSineMatch,
   assertWaveformExcursion,
+  sineFollowWindow,
 } from './waveformMetrics.mjs';
 
 /** Sprint C parameterized matrices (M8–M12). */
@@ -354,19 +355,9 @@ const SIL_ENCODER_STEPS_PER_MM = 4 * 2048;
 const DEADBAND_UM = (8 / SIL_ENCODER_STEPS_PER_MM) * 1000;
 
 function assertFollowsSineUm(series, { amplitudeMm, frequencyHz, cycles, centreMm }, label) {
-  // Start once the commanded profile has LEFT the peak. The approach parks on
-  // the peak for hundreds of milliseconds, and a cosine fitted through that
-  // plateau lands 180° out. End a tenth of a cycle before the return move.
-  const spMm = series.setpoint.map((p) => p / 1000);
-  const tS = series.time.map((t) => t / 1e6);
-  const peak = Math.max(...spMm.filter(Number.isFinite));
-  const trough = Math.min(...spMm.filter(Number.isFinite));
-  const leftPeak = peak - 0.2 * (peak - trough);
-  let i = 0;
-  while (i < spMm.length && spMm[i] < peak - 0.05) i += 1;
-  while (i < spMm.length && spMm[i] > leftPeak) i += 1;
-  const tMinS = tS[Math.min(i, tS.length - 1)];
-  const tMaxS = tMinS + cycles / frequencyHz - 0.5 / frequencyHz;
+  // From once the commanded wave has left the peak it set off from, for all
+  // but its last half cycle (sineFollowWindow).
+  const { tMinS, tMaxS } = sineFollowWindow(series.time, series.setpoint, { cycles, frequencyHz, amplitudeMm });
   const peakVelMmS = 2 * Math.PI * frequencyHz * amplitudeMm;
   assertFollowsSineWindowUm(series, {
     amplitudeMm,
@@ -798,8 +789,20 @@ async function zeroLength(page) {
 
 // Go to Control and pick the (only) seeded sample + motion profile in the runner.
 async function selectSeeded(page) {
-  await page.goto(`${APP_URL}#/control`);
+  // The runner reads the saved profiles when Control mounts. seedProfiles
+  // writes them behind the app's back, and a scenario that was already on
+  // Control (zeroLength jogs there) would find the lists it read before the
+  // seed: empty, so the select below waits out its whole timeout. Leave
+  // Control and come back, as an operator does from Profiles.
   const runner = page.locator('.panel', { hasText: 'New Test' });
+  await page.goto(`${APP_URL}#/profiles`);
+  await runner.waitFor({ state: 'detached', timeout: DEVICE_WAIT_MS });
+  await page.goto(`${APP_URL}#/control`);
+  for (const nth of [0, 1]) {
+    await runner.locator('select').nth(nth).locator('option').nth(1)
+      .waitFor({ state: 'attached', timeout: DEVICE_WAIT_MS })
+      .catch(() => { throw new Error(`the runner lists no seeded ${nth === 0 ? 'sample' : 'motion'} profile`); });
+  }
   await runner.locator('select').nth(0).selectOption({ index: 1 });
   await runner.locator('select').nth(1).selectOption({ index: 1 });
 }

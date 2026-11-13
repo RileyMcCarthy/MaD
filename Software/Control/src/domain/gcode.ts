@@ -136,9 +136,11 @@ export function validateAndEncodeMove(move: ProtoMove): Uint8Array {
  * sine"); it also means `H` means the same thing on every line, rather than
  * being a polymorphic knob whose meaning depends on W.
  *
- * Returns null if the line is not a G123. The waveform oscillates about the
- * machine's current position (the program ramps to the mean with a preceding
- * G1) and is returned there at the end.
+ * Returns null if the line is not a G123. The wave starts at rest where the
+ * carriage stands, which is one of its peaks, and sets off in the direction of
+ * A's sign: + rises first (the centre is A above the start), - falls first. It
+ * ends back on that peak after whole cycles, so a program that wants a wave
+ * centred somewhere moves onto a peak first.
  */
 export function parseGcodeWaveform(line: string): ProtoWaveformMove | null {
   const tokens = line.trim().split(/\s+/);

@@ -196,7 +196,7 @@ so a test runs unattended.
 ```mermaid
 flowchart TB
     UI["Control app<br/>generateTestGcode → 'G123 A.. F.. C.. W.. H.. L.. S..'"]
-    ENC["gcode.ts<br/>parse + validate → WaveformMove (18-byte wire)"]
+    ENC["gcode.ts<br/>parse + validate → WaveformMove (21-byte wire)"]
     SLAVE["app_messageSlave<br/>ProtoEmb_onWrite_test_waveform"]
     SD["SD program record<br/>app_motion_move_t.wave (its own fields)"]
     MOT["app_motion<br/>unit conversion + completion check"]
@@ -211,7 +211,8 @@ off and evaluated a sine regardless, so every triangle ever run was a sine.
 
 `app_motion`'s whole remaining job is unit conversion and asking the driver
 whether it is done. Completion is the driver's arrival verdict: it alone knows
-how many cycles have elapsed and whether the closing move has landed.
+how many cycles have elapsed and whether the wave has come to rest on the peak
+it started from.
 
 ## The G-code
 
@@ -238,11 +239,16 @@ hold in compression; a single symmetric dwell cannot express the test that most
 needs one. Holds take their time from the traverses, not from the period, so
 adding a hold never silently changes a fatigue test's frequency.
 
+A wave starts where the carriage stands, so a program that wants it centred
+somewhere puts the carriage on a peak first. Here that is the bottom of a wave
+centred on 12.5 mm, and a positive `A` rises from it; each wave ends back on
+the bottom, where the next one starts:
+
 ```gcode
-G1 X12.5 F31.4                    ; ramp to the mean
-G123 A5 F1 C1000 W0               ; sine, 5 mm, 1 Hz, 1000 cycles
-G123 A5 F0.5 C200 W1 H2.0 L0      ; triangle, 2 s hold at peak tension only
-G123 A2 F0.2 C50 W0 S0.8          ; 80% of the cycle loading, 20% unloading
+G1 X7.5 F31.4                     ; to the bottom of a wave centred on 12.5 mm
+G123 A5 F1 C1000 W0               ; sine, 5 mm, 1 Hz, 1000 cycles, rising first
+G123 A5 F0.25 C200 W1 H2.0 L0     ; triangle, 2 s hold at peak tension only
+G123 A5 F0.2 C50 W0 S0.8          ; 80% of the cycle loading, 20% unloading
 G122                              ; signal test complete
 ```
 
