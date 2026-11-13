@@ -43,8 +43,8 @@ why the three maps disagreed:
 
 | Component | Transport | Status |
 |---|---|---|
-| Host protocol link (P32/P30: on `P2Iss` directly; on the project files through the carrier's `J4` and IC2) | UART framed on Thevenin levels, rate derived from the guest's own `WXPIN` divisor | **done** |
-| Debug console (P62) | Byte-level inside `p2core::Board`, forwarded to the emulator log | **partial** — not a node |
+| Host protocol link (P32/P30, on the project files through the carrier's `J4` and IC2) | UART framed on Thevenin levels, rate derived from the guest's own `WXPIN` divisor | **done** |
+| Debug console (P62) | An async transmit pad on the module's net; a terminal on `J203.50` reads it | **done** — see G1 |
 | DS2 piggy board (netlist) + ADS122U04 | UART on levels; analog inputs via MNA cluster solve | **done** — see F1 |
 | Load cell bridge | Two Thevenin drives into AIN0/AIN1 | **done** |
 | Servo drive — `STEP` | Timed level transitions (`p2iss::pulse::PulseDriver`), both `P_TRANSITION` and `P_NCO_FREQ` | **done** |
@@ -56,7 +56,7 @@ why the three maps disagreed:
 | ESD lines (upper, lower, switch) | Sensed levels, idle **high** (`activeLow` in `HAL_GPIO_config.c`) | **done** |
 | ESD power, charge pump | Driven levels | **done** |
 | microSD card | **On nets** as a decoupled component; the ISS reads its smart-pin roles from the mode words (`p2core::smartbus`) and holds no SPI knowledge; firmware **mounts** it | **done** — see S1, S2, G4 |
-| SPI boot flash | **On the net** (`p2iss::flashnode`), bit-banged edge-by-edge | **done** — see B1 |
+| SPI boot flash | **On the module's net** (the P2-EC32MB's W25Q128JV, embsim's flash model), clocked edge by edge | **done** — see B1, B3 |
 | P2 ROM bootloader | **Executes** the real Parallax ROM and boots from the net flash | **done** — see B2 |
 
 ---
@@ -106,6 +106,10 @@ card (see S2).
 Original detail follows.
 
 ### S1 (original) — microSD as a node — built, one gap left
+
+*`SdCardNode`, `P2Iss::with_spi` and `sd_node.rs`, below, went with `P2Iss`
+(MaD #298). The card is embsim's model in the module's socket
+(`p2iss/tests/ec32mb_sd_mount.rs`).*
 
 The bus is real. `p2core::SpiShift` is a bit-level shifter pair
 (`p2core/src/spi.rs`), `p2iss::spi_bus::SpiSequencer` drives the clock and MOSI
@@ -171,7 +175,9 @@ mount, both fixed:
 With both fixed the firmware reads block 0 (boot sector) then block 129 (root
 directory) over the wire and advances past the mount. Tests
 `p2iss/tests/sd_mount.rs` (formatted card mounts, blank card is probed and
-rejected) and `sd_node.rs` (the full init sequence completes).
+rejected) and `sd_node.rs` (the full init sequence completes) held it on
+`P2Iss`'s bare nets; they went with `P2Iss` (MaD #298), and
+`p2iss/tests/ec32mb_sd_mount.rs` holds the mount in the module's socket.
 
 ### S2 (original) — FlexC `mount()` returns -1 — narrowed
 `dev_nvram.c:218: failed to mount sd card: /sd`, so the firmware boots on
@@ -193,6 +199,10 @@ pull-up on the receive pin, or the smart-pin reconfiguration
 should be re-tested once S1's framing gap closes rather than chased separately.
 
 ### B1 — SPI boot flash — **DONE** (on the net)
+
+*`FlashNode` and `rom_boot_net.rs`, below, went with `P2Iss` (MaD #298).
+The flash is the P2-EC32MB's own W25Q128JV on the module's nets (B3,
+`p2iss/tests/ec32mb_flash_boot.rs`).*
 
 `p2iss::flashnode::FlashNode` is a first-class component on real nets. It wraps
 `p2core::SpiFlash` (the shared protocol: `$66`/`$99` reset, `$04` write-disable,
@@ -255,9 +265,10 @@ clock word selects — RCSLOW, or for the crystal and PLL the rate the program
 recorded at hub `$14` — carried on from the instant of the switch. Hub `$14`
 is the ROM's scratch until a program is loaded, so the ROM's serial window
 (1.8e9 clocks, a minute on the fastest 30 MHz part) lasts 90 s of board time,
-as it would at nominal. Tests: `p2core/tests/rom_time_base.rs`,
-`p2iss/tests/rom_serial_window.rs`. A `P2IssCore` keeps its own map from the
-clock word and the crystal on `XI`.
+as it would at nominal. Test: `p2core/tests/rom_time_base.rs`. A
+`P2IssCore` keeps its own map from the clock word and the crystal on `XI`,
+and holds the window there too: `p2iss/tests/ec32mb_serial_flash.rs` probes
+the ROM after ten seconds of silence on the module.
 
 Reference: `p2iss/rom/rom_booter_v33k.spin2` (trimmed Parallax source; see
 `p2iss/rom/README.md`).
@@ -359,10 +370,10 @@ boot's 18 373 flash clock edges each on a nanosecond of its own, every one on
 a tick of the 20 MHz RC clock from START, 100 ns apart at the closest; a step
 train's pin released by `_pinclear` and then driven as a plain pin; and the
 sync-serial clock's transitions half its period apart from the `WYPIN`, the
-pad released once the pin is cleared. `P2Iss` keeps its `Component` impl and
-pin lists for the `p2iss` tests that still use them. `mad-emulator`, their
-last consumer outside those tests, has retired (MaD #362); they go in step
-11's follow-up, which MaD #298 tracks until it lands.
+pad released once the pin is cleared. `P2Iss`, the ISS as a component on
+no board with lists of the pins it carried on nets, went after
+`mad-emulator` (MaD #362), with the `p2iss` tests that used it (MaD #298):
+`P2IssCore` is the only route.
 
 `p2iss/tests/ec32mb_sd_mount.rs`, stepped, is the same module with the card
 `make sd-image` writes in `J301`: the firmware's boot-time mount and its
@@ -387,11 +398,10 @@ drives MISO whenever `P60`, the flash's clock, selects it, so the ROM's and
 stage-1's flash reads fight it (the flash wins, at ten times the strength,
 and the boot is unaffected; RileyMcCarthy/embsim#142).
 
-### G1 — Debug console is not a node
-*Inside the package (B3) it is: `P62` is an async transmit pad on the
-module's net, and a terminal on `J203.50` reads it.* For `P2Iss`:
-P62/P63 are still byte-level inside `p2core::Board`. They should be a
-`SerialLink` like the protocol and force-gauge links.
+### G1 — Debug console is not a node — **DONE**
+Inside the package (B3) `P62` is an async transmit pad on the module's net,
+and a terminal on `J203.50` reads it. `P2Iss`, which kept P62/P63
+byte-level inside `p2core::Board`, is gone (MaD #298).
 
 ### G2 — `HW_pins.h` SD block is wrong and unused
 Correct it to the real microSD map (`CLK=61, CS=60, MOSI=59, MISO=58`) or
@@ -474,6 +484,12 @@ regression tests (see F1). The submodule is on the unmerged branch
 [embsim](https://github.com/RileyMcCarthy/embsim) before the MaD pin bump.
 
 ### G4 — the SD smart-pin path is generalized — **DONE**
+
+*`with_sync_serial`, `SdCardNode` and the pump's `NetPins::next_edge_ns`,
+below, went with `P2Iss` (MaD #298). `p2core::smartbus` stays: inside the
+package (B3) it is the pads' synchronous-serial hardware on the guest's own
+clock, and the card is embsim's SD card model in the module's socket
+(`p2iss/tests/ec32mb_sd_mount.rs`).*
 
 The SD card is now as decoupled from the CPU as the flash. `p2core::smartbus`
 models the P2's synchronous-serial smart pins as CPU hardware: it reads the
@@ -668,10 +684,11 @@ thread) are the comparable ones:
 
 ```text
 cd SIL && make p2image && cargo build --release -p p2iss --examples
-./target/release/examples/iss_speed ec32mb 2   # P2IssCore, the module, its flash
-./target/release/examples/iss_speed            # P2Iss, the image in hub RAM, the link's 2 pins on nets
-./target/release/examples/iss_speed levels     # the same with 14 GPIO pins on nets as levels
+./target/release/examples/iss_speed 2   # P2IssCore, the module, its flash
 ```
+
+The `bare` and `levels` rows were `P2Iss`'s modes of the example, which
+went with it (MaD #298); they stand as measured.
 
 | Route | Phase | Board time | Host s per board s, wall (CPU) | Load average |
 |---|---|---|---|---|

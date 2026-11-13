@@ -63,7 +63,7 @@ function idbRequest<T>(req: IDBRequest<T>): Promise<T | null> {
 }
 
 /** Sessions in the store, newest first. */
-export async function readPersistedSessions(): Promise<PersistedSession[]> {
+async function readPersistedSessions(): Promise<PersistedSession[]> {
   const db = await openDb();
   if (!db) return [];
   try {
@@ -172,18 +172,4 @@ export function startLogPersistence(sessionId: string): LogPersistence {
       timer = null;
     },
   };
-}
-
-/** Remove every persisted session (used by the report preview's discard path). */
-export async function clearPersistedSessions(): Promise<void> {
-  const db = await openDb();
-  if (!db) return;
-  try {
-    const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).clear();
-  } catch {
-    // Best-effort.
-  } finally {
-    db.close();
-  }
 }

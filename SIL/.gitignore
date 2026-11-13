@@ -1,6 +1,5 @@
 # Rust build artifacts
 target/
-emulator/target/
 
 # Emulator/logs
 *.log

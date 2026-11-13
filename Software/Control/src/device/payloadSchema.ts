@@ -39,11 +39,6 @@ const FIXED_READ_REPLIES: ReadonlyMap<number, { name: string; bytes: number }> =
   [MSG_READ_SAMPLE_PROFILE, { name: 'sample profile', bytes: SAMPLEPROFILE_WIRE_SIZE }],
 ]);
 
-/** The size this app's schema expects for a read reply, if it is fixed. */
-export function expectedReadReplyBytes(command: number): number | undefined {
-  return FIXED_READ_REPLIES.get(command)?.bytes;
-}
-
 /** The mismatch for a read reply, or null when its length is the schema's. */
 export function readReplyMismatch(command: number, payload: Uint8Array): PayloadMismatch | null {
   const spec = FIXED_READ_REPLIES.get(command);

@@ -7,10 +7,10 @@
 //! within the same breath the guest asks.
 //!
 //! This lives in [`crate::Board`], next to the SD card, for exactly that
-//! reason. A net-resolved model (see `p2iss::flashnode`) is faithful to a
-//! *smart-pin-clocked* flash, but a net resolves between engine wakes, and the
-//! ROM's bit-bang samples faster than that. Here the pins are the board's own,
-//! resolved the instant they change.
+//! reason: here the pins are the board's own, resolved the instant they
+//! change. A flash on a net answers in time only for a guest that stops at
+//! every pad change until the engine has resolved it, as `p2iss`'s package
+//! core does with the P2-EC32MB's flash (`p2iss::package`).
 //!
 //! # Pin map — the swap that matters
 //!

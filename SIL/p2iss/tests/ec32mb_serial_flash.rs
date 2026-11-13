@@ -19,6 +19,16 @@
 //! `~`, the end of a flash load. The firmware is a pattern no flash holds by
 //! chance; the case reads the flash back.
 //!
+//! The same module holds the serial window that load races. The ROM times
+//! its window in clocks: 600 receive timeouts of `rc_max / 10`, 1.8e9
+//! clocks, sized so the fastest RCFAST part (30 MHz) still waits a minute.
+//! How long that is in board time is the core's clock map, and the app's
+//! flasher's first probe has to land inside it however long the page took
+//! to start. The second case keeps the host silent for ten seconds of board
+//! time, a sixth of the shortest window a part has, before the probe; the
+//! ROM's wait for a byte is a spin the ISS executes clock by clock.
+//! `p2core/tests/rom_time_base.rs` pins the rate on the bare machine.
+//!
 //! Skips, saying why, without the boot ROM (`make bootrom`) or the app's
 //! vendored stub.
 
@@ -31,12 +41,14 @@ use std::time::{Duration, Instant};
 use embsim_board::uart::UartFraming;
 use embsim_board::{
     AttachError, Component, ComponentNetIo, EndpointRef, Harness, HostRailLine, JumperState,
-    PinDecl, Scenario, System, HOST_RAIL_PINS,
+    PinDecl, Scenario, System, SystemHandle, HOST_RAIL_PINS,
 };
 use embsim_boards::ec32mb::{Ec32mb, FLASH_SELECT_POLE, FLASH_SELECT_SWITCH, P59_PULL_UP_POLE};
 use embsim_boards::p2::{P2Package, P2_RESTART_DELAY_NS};
 use embsim_core::virtual_clock;
-use p2iss::P2IssCore;
+use embsim_models::spi_flash_component::FlashView;
+use p2iss::package::RCFAST_HZ;
+use p2iss::{P2IssCore, P2IssHandle};
 use vibes_behaviour::{behaviour, expect, Test};
 
 const LOADER_BAUD: u32 = 2_000_000;
@@ -51,6 +63,11 @@ const START_NS: u64 = RESET_RELEASE_NS + P2_RESTART_DELAY_NS;
 
 /// Host time without any board time passing that ends the run.
 const STALL_WALL: Duration = Duration::from_secs(300);
+
+/// Board time the host stays silent for in the window case: seconds, as a
+/// page that is slow to start keeps it, and well inside the minute every
+/// part's window lasts.
+const IDLE_NS: u64 = 10_000_000_000;
 
 fn ep(endpoint: &str) -> EndpointRef {
     EndpointRef::parse(endpoint).expect("endpoint parses")
@@ -259,44 +276,18 @@ fn wait_board(budget_ns: u64, mut done: impl FnMut() -> bool) -> bool {
     }
 }
 
-#[test]
-fn the_flashers_load_through_the_roms_serial_loader_programs_the_modules_flash() {
-    behaviour!(Test {
-        id: "p2iss.ec32mb-serial-flash-load",
-        covers: Some("SIL/p2iss/src/package.rs#P2IssCore"),
-        given: "a P2-EC32MB module, its flash erased and strapped for the ROM's serial boot, sent \
-                what the app's flasher sends: the probe, then the flash programmer and a firmware \
-                as hex",
-    });
-    expect!(
-        "rom-answers",
-        "the ROM answers the probe with its version, G"
-    );
-    expect!(
-        "stub-programs",
-        "the module's flash is write-enabled, erased and programmed page by page"
-    );
-    expect!(
-        "firmware-in-flash",
-        "the firmware lands in the module's flash byte for byte",
-        "the app reports a written firmware without reading the flash back, so only the flash \
-         says whether the write happened"
-    );
+/// The module strapped for the ROM's serial boot: powered from its fingers,
+/// its flash erased, `S301` closed for the flash's select and the `P59`
+/// pull-up, and the flasher on the debug fingers.
+struct SerialBoot {
+    system: SystemHandle,
+    handle: P2IssHandle,
+    line: Arc<Line>,
+    flash: FlashView,
+}
 
-    let (Some(boot_rom), Some(stub)) = (rom(), flash_loader_stub()) else {
-        eprintln!(
-            "\n*** SKIPPED: needs `make bootrom` and the app's flash stub ({}). Asserted \
-             NOTHING.\n",
-            image_ts_path().display()
-        );
-        return;
-    };
-    let fw = firmware();
-    let load = hex_flash_load(&build_flash_image(&stub, &fw));
-
-    let _clock = lock_clock();
-    virtual_clock::init(0.0, 160_000_000);
-    let core = P2IssCore::with_boot_rom(&boot_rom);
+fn serial_boot(boot_rom: &[u8]) -> SerialBoot {
+    let core = P2IssCore::with_boot_rom(boot_rom);
     let handle = core.handle();
     let package = P2Package::new(core);
     let board = Ec32mb::new().with_flash_image(Vec::new());
@@ -349,6 +340,57 @@ fn the_flashers_load_through_the_roms_serial_loader_programs_the_modules_flash()
         )
         .start()
         .expect("the system starts");
+    SerialBoot {
+        system,
+        handle,
+        line,
+        flash,
+    }
+}
+
+#[test]
+fn the_flashers_load_through_the_roms_serial_loader_programs_the_modules_flash() {
+    behaviour!(Test {
+        id: "p2iss.ec32mb-serial-flash-load",
+        covers: Some("SIL/p2iss/src/package.rs#P2IssCore"),
+        given: "a P2-EC32MB module, its flash erased and strapped for the ROM's serial boot, sent \
+                what the app's flasher sends: the probe, then the flash programmer and a firmware \
+                as hex",
+    });
+    expect!(
+        "rom-answers",
+        "the ROM answers the probe with its version, G"
+    );
+    expect!(
+        "stub-programs",
+        "the module's flash is write-enabled, erased and programmed page by page"
+    );
+    expect!(
+        "firmware-in-flash",
+        "the firmware lands in the module's flash byte for byte",
+        "the app reports a written firmware without reading the flash back, so only the flash \
+         says whether the write happened"
+    );
+
+    let (Some(boot_rom), Some(stub)) = (rom(), flash_loader_stub()) else {
+        eprintln!(
+            "\n*** SKIPPED: needs `make bootrom` and the app's flash stub ({}). Asserted \
+             NOTHING.\n",
+            image_ts_path().display()
+        );
+        return;
+    };
+    let fw = firmware();
+    let load = hex_flash_load(&build_flash_image(&stub, &fw));
+
+    let _clock = lock_clock();
+    virtual_clock::init(0.0, 160_000_000);
+    let SerialBoot {
+        system,
+        handle,
+        line,
+        flash,
+    } = serial_boot(&boot_rom);
 
     // The ROM has read P59 and waits on P63 well within 50 ms of its start.
     wait_board(START_NS + 50_000_000, || {
@@ -419,6 +461,78 @@ fn the_flashers_load_through_the_roms_serial_loader_programs_the_modules_flash()
         &image[at..at + fw.len()],
         &fw[..],
         "firmware-in-flash: {report}"
+    );
+    drop(system);
+}
+
+#[test]
+fn the_roms_serial_window_outlasts_ten_seconds_of_silence() {
+    behaviour!(Test {
+        id: "p2.rom-serial-window-board-time",
+        covers: Some("SIL/p2iss/src/package.rs#GuestClock"),
+        given: "a P2-EC32MB module strapped for the boot ROM's serial boot, with nothing on its \
+                programming port for the first 10 seconds of board time after the chip starts",
+    });
+    expect!(
+        "rcfast",
+        "the chip's clock runs at the 20 MHz of its internal fast oscillator while the ROM waits"
+    );
+    expect!(
+        "still-answers",
+        "the ROM still answers the flasher's request to identify the chip: its serial window \
+         lasts at least a minute, as on silicon"
+    );
+
+    let Some(boot_rom) = rom() else {
+        eprintln!("\n*** SKIPPED: needs `make bootrom`. Asserted NOTHING.\n");
+        return;
+    };
+
+    let _clock = lock_clock();
+    virtual_clock::init(0.0, 160_000_000);
+    let SerialBoot {
+        system,
+        handle,
+        line,
+        ..
+    } = serial_boot(&boot_rom);
+
+    // Silence on the wire for the idle. A ROM that shuts its window stops
+    // its cog.
+    let host = Instant::now();
+    let mut shut_at = None;
+    wait_board(START_NS + IDLE_NS, || {
+        if handle.running_cogs() == 0 {
+            shut_at = Some(virtual_clock::virtual_ns());
+            return true;
+        }
+        virtual_clock::virtual_ns() >= START_NS + IDLE_NS
+    });
+    eprintln!(
+        "ec32mb serial window: idled {:.3} s of board time from START in {:.1} s of host time",
+        virtual_clock::virtual_ns().saturating_sub(START_NS) as f64 / 1e9,
+        host.elapsed().as_secs_f64()
+    );
+    assert_eq!(
+        shut_at,
+        None,
+        "still-answers: the ROM shut its serial window before the host said anything; trap {:?}",
+        handle.trap()
+    );
+    assert_eq!(handle.clock_hz(), Some(RCFAST_HZ), "rcfast");
+
+    line.outbox.lock().unwrap().extend(CHK.iter().copied());
+    let answered = wait_board(1_000_000_000, || {
+        String::from_utf8_lossy(&line.heard.lock().unwrap()).contains("Prop_Ver G")
+    });
+    assert!(
+        answered,
+        "still-answers: the ROM answers the probe after {IDLE_NS} ns of silence; heard {:?}, \
+         cogs {}, trap {:?}, bytes (tx, rx) {:?}",
+        String::from_utf8_lossy(&line.heard.lock().unwrap()),
+        handle.running_cogs(),
+        handle.trap(),
+        handle.byte_counts(),
     );
     drop(system);
 }

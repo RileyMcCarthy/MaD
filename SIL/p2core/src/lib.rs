@@ -2,9 +2,9 @@
 //!
 //! This is the CPU only. It executes the real flexcc-produced P2 image rather
 //! than host-compiled C, which is the whole reason it exists: the native SIL
-//! backend compiles the firmware with clang and substitutes the HAL, so it
-//! structurally cannot see flexcc codegen bugs, 32-bit pointer assumptions,
-//! cog stack overflow, or smart-pin misconfiguration.
+//! backend (since retired) compiled the firmware with clang and substituted
+//! the HAL, so it structurally could not see flexcc codegen bugs, 32-bit
+//! pointer assumptions, cog stack overflow, or smart-pin misconfiguration.
 //!
 //! # Scope
 //!
@@ -2632,12 +2632,6 @@ impl<P: PinBus> Machine<P> {
         st.bits_left > 0 && matches!(st.kind, 2 | 4 | 6)
     }
 
-    /// The transition clock of the streamer transfer the bus is clocking,
-    /// while one runs ([`PinBus::defers_streamer`]).
-    pub fn stream_burst_clock_pin(&self) -> Option<u8> {
-        self.stream_burst.map(|burst| burst.clock_pin)
-    }
-
     /// One transition of the streamer transfer the bus is clocking, at its
     /// instant: the clock pad flips; on a falling edge an input transfer
     /// samples its pin, and an output transfer presents its next bit for
@@ -4034,7 +4028,7 @@ impl<P: PinBus> Machine<P> {
             Waitx => {
                 // The cog is not executing during a wait: jump the clock
                 // instead of spinning, which is exactly what an ISS can do and
-                // a HAL-charged native backend cannot.
+                // the retired HAL-charged native backend could not.
                 self.cogs[cog].clocks += d as u64;
             }
             Hubset => {

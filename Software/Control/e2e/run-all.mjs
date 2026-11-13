@@ -1216,11 +1216,8 @@ async function releaseAppServer(version) {
   return { url, close: () => server.close() };
 }
 
-// Write command ids the fake board records (Protocol/MaDProtocol.yaml).
+// Write command id the fake board records (Protocol/MaDProtocol.yaml).
 const WRITE_MOTION_ENABLE = 1;
-const WRITE_TEST_RUN = 2;
-const WRITE_MANUAL_MOVE = 3;
-const WRITE_TEST_MOVE = 4;
 
 /**
  * Press every control that moves the gantry on the Live screen (Enable
@@ -1244,24 +1241,6 @@ async function pressRefusedLiveControls(page, base = APP_URL) {
   assert(
     (await page.getByText('Motion: enabled').count()) === 0,
     'motion was enabled on firmware the app cannot drive',
-  );
-}
-
-/** Start a seeded test from Control; on firmware the app cannot drive it is refused. */
-async function startRefusedTest(page) {
-  await seedProfiles(page, {
-    sample: { serial: 'Compat-Sample', maxForce: 500, maxVelocity: 25, maxDisplacement: 100, sampleWidth: 4, sampleThickness: 1.5 },
-    motion: { name: 'Compat-Motion', moves: [
-      { moveType: 'linear', moveParameters: { position: 2, velocity: 5, time: 0 } },
-    ] },
-  });
-  await selectSeeded(page);
-  const runner = page.locator('.panel', { hasText: 'New Test' });
-  await press(page.getByTestId('run-test'));
-  await runner.getByText(/Test failed: .*firmware/i).waitFor({ timeout: DEVICE_WAIT_MS });
-  assert(
-    logged(await appLogEntries(page), 'device', 'motion-refused', 'run-test').length > 0,
-    'the device client did not refuse the test start',
   );
 }
 
@@ -1801,7 +1780,7 @@ const scenarios = [
     // 1 s state polls) and FILE_DOWNLOAD returns "not ready" (no SD test-data
     // logging in the emulator). So this asserts run-START (the part SIL supports:
     // sample-profile write + move upload + TEST_RUN ACK). Auto-completion and
-    // data download match the desktop and require real hardware. See docs/PARITY.md §9.
+    // data download match the desktop and require real hardware.
     id: 'G1',
     name: 'Run start on SIL (profile→firmware, G-code upload, TEST_RUN)',
     async run() {

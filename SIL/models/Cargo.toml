@@ -14,4 +14,4 @@ tracing.workspace = true
 
 [dev-dependencies]
 vibes-behaviour = { path = "../../Vibes/bindings/rust" }
-rstest = "0.25"
+rstest.workspace = true

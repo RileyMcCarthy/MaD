@@ -42,7 +42,7 @@ export default defineConfig({
   },
   plugins: [
     // Coverage instrumentation for the e2e suite. The browser then reports what
-    // it executed via window.__coverage__, which e2e/coverage.mjs collects and
+    // it executed via window.__coverage__, which e2e/fixtures.mjs (withCoverage) collects and
     // merges with the unit run — without this, Playwright's work is invisible
     // to the coverage number because it happens in another process.
     //

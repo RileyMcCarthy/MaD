@@ -188,6 +188,9 @@ gated by `decoder_golden.rs`.
 > `decodetree.py`, stubs every `trans_` function, and compares against p2core
 > over every distinct instruction word in the firmware image:
 > **9 652 decodable words, 100 % agreement, 0 differences.**
+>
+> The committed copy has since moved with the target into embsim
+> (`p2-qemu/qemu-target/target-p2/insn.decode`); MaD no longer keeps one.
 
 The *semantics* do not share: every op is written twice, once as Rust that
 executes and once as C that emits code. Under [D5](#d5-qemu-replaces-the-iss-p2core-is-a-bring-up-oracle-then-it-goes)

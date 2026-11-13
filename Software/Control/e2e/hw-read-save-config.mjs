@@ -3,7 +3,7 @@
  * tools/hw-ws-bridge.mjs) and exercise reading + saving a machine profile
  * through the Settings → Machine configuration UI.
  *
- *   Terminal 1:  MAD_SERIAL=/dev/cu.usbserial-XXXX npm run hw:bridge
+ *   Terminal 1:  MAD_SERIAL=/dev/cu.usbserial-XXXX node tools/hw-ws-bridge.mjs
  *   Terminal 2:  npm run dev
  *   Then:        node e2e/hw-read-save-config.mjs          # read only
  *                MAD_DO_SAVE=1 node e2e/hw-read-save-config.mjs   # read + save round-trip
@@ -21,8 +21,9 @@ const fieldInput = (page, label) =>
 const NUMERIC_LABELS = [
   'Encoder (step/mm)',
   'Servo (step/mm)',
-  'Force Gauge (N/step)',
-  'Force Gauge Zero Offset (steps)',
+  'Load Cell Capacity (N)',
+  'Load Cell Sensitivity (mV/V)',
+  'Load Cell Zero Balance (mV/V)',
   'Position Max (mm)',
   'Velocity Max (mm/s)',
   'Acceleration Max (mm/s^2)',
@@ -30,13 +31,16 @@ const NUMERIC_LABELS = [
   'Homing Velocity (mm/s)',
   'Homing Offset (mm)',
   'Jaw Offset (mm)',
+  'Restricted Velocity (mm/s)',
+  'Servo Kp (1/s)',
+  'Servo Ki (1/s^2)',
 ];
 
 async function readProfile(page) {
   const out = {};
   out.Name = await fieldInput(page, 'Name').inputValue();
   for (const label of NUMERIC_LABELS) {
-    // Numeric fields share the substring of some others ("Force Gauge" etc.),
+    // Numeric fields share the substring of some others ("Load Cell" etc.),
     // so match on the exact label text node.
     out[label] = await page
       .locator('label.field')
