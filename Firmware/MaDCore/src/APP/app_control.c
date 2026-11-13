@@ -24,6 +24,14 @@
  * Constants
  **********************************************************************/
 
+/* The force, as a percentage of the load cell's rated capacity
+ * (loadCellCapacity), past which the machine faults. A cell is specified to
+ * survive a safe overload of about 150% of capacity and the drive can push
+ * well past that (a NEMA17 on the belt reaches about 65 N against a 2 kg
+ * cell's 30 N), so the machine stops driving at 120%: clear of a test that
+ * legitimately runs the cell to its full scale, and with margin left for the
+ * distance the carriage takes to stop. */
+#define APP_CONTROL_OVERLOAD_PERCENT 120
 
 /*********************************************************************
  * Macros
@@ -54,6 +62,9 @@ typedef struct
 typedef struct
 {
     int32_t maxMachineTension;
+    /* mN: |machine force| past this is FORCE_OVERLOAD. Zero when the profile
+     * gives no capacity to judge against, which switches the check off. */
+    int32_t overloadForce;
 } app_control_nvram_S;
 
 typedef struct
@@ -66,9 +77,10 @@ typedef struct
 
     bool motionEnabled;
     bool testRunning;
-    /* Sticky: a stall stops the machine and stays reported until the operator
-     * disables motion. See processFaults for why it cannot self-clear. */
-    bool stallLatched;
+    /* Sticky, for the faults that latch (app_control.h): one seen while motion
+     * is enabled stops the machine and stays reported until the operator
+     * disables motion. See processFaults for why they cannot self-clear. */
+    bool latched[APP_CONTROL_FAULT_COUNT];
     app_control_fault_E faultedReason;
     app_control_restriction_E restrictedReason;
 
@@ -86,6 +98,35 @@ typedef struct
  * Private Variable Definitions
  **********************************************************************/
 static app_control_data_S app_control_data;
+
+/* The order in which simultaneous faults are reported: the first one in this
+ * list that is active is the reason given. Causes come before their
+ * consequences, so the reason names where to look.
+ *
+ * It is not the enum's order, which is the wire's and cannot move. The
+ * emergency-stop inputs are why: pressing the emergency stop, or tripping an
+ * end-of-travel emergency switch, opens the relay chain, and the chain's lost
+ * power (ESD_POWER) is the consequence every one of them shares. ESD_POWER
+ * comes first in the enum, so reported in enum order it hid which input did
+ * it. Here the three inputs come first and ESD_POWER is what is left when
+ * none of them explains the lost power.
+ *
+ * An overloaded cell comes before the stall it may also cause, and after the
+ * gauge's own link: a gauge that has stopped answering has no reading to be
+ * overloaded by. */
+static const app_control_fault_E app_control_faultPriority[] = {
+    APP_CONTROL_FAULT_COG,
+    APP_CONTROL_FAULT_WATCHDOG,
+    APP_CONTROL_FAULT_ESD_SWITCH,
+    APP_CONTROL_FAULT_ESD_UPPER,
+    APP_CONTROL_FAULT_ESD_LOWER,
+    APP_CONTROL_FAULT_ESD_POWER,
+    APP_CONTROL_FAULT_SERVO_COMMUNICATION,
+    APP_CONTROL_FAULT_FORCE_GAUGE_COMMUNICATION,
+    APP_CONTROL_FAULT_FORCE_OVERLOAD,
+    APP_CONTROL_FAULT_SERVO_STALL,
+};
+#define APP_CONTROL_FAULT_PRIORITY_COUNT (sizeof(app_control_faultPriority) / sizeof(app_control_faultPriority[0]))
 /**********************************************************************
  * Private Function Prototypes
  **********************************************************************/
@@ -94,6 +135,7 @@ static void app_control_private_processRequests(void);
 static app_control_fault_E app_control_private_processFaults(void);
 static app_control_restriction_E app_control_private_processRestrictions(void);
 static app_control_state_E app_control_private_getDesiredState(void);
+static bool app_control_private_latching(app_control_fault_E fault, bool live);
 
 /**********************************************************************
  * Private Function Definitions
@@ -116,12 +158,33 @@ static void app_control_private_processRequests(void)
         DEBUG_INFO("%s", "CONTROL: motion DISABLE requested\n");
         app_control_data.motionEnabled = false;
         app_control_data.request.triggerMotionDisabled = false;
-        /* The operator's acknowledgement of a stall. Nothing else clears it --
-         * the jam has to be cleared by hand, and asking for motion off is the
-         * one action that says someone has looked at the machine. */
-        app_control_data.stallLatched = false;
+        /* The operator's acknowledgement of a latched fault. Nothing else
+         * clears one -- a jam has to be cleared by hand, an emergency stop
+         * released and its circuit reset -- and asking for motion off is the
+         * one action that says someone has looked at the machine. A cause that
+         * is still present keeps its fault, live, and motion stays refused
+         * until it has gone. */
+        memset(app_control_data.latched, 0, sizeof(app_control_data.latched));
     }
     APP_CONTROL_LOCK_REL();
+}
+
+/* One of the faults that latch (app_control.h). `live` is its cause, read this
+ * tick. Returns whether the fault stands: its cause is present, or it was
+ * while motion was enabled and nobody has acknowledged it since.
+ *
+ * Latching only while motion is ENABLED is what makes the acknowledgement take
+ * effect on the first press: processRequests has already cleared both the
+ * latch and motionEnabled by the time this runs, so a cause still present on
+ * that tick -- the residue of the one that stopped the machine -- does not
+ * re-arm it. */
+static bool app_control_private_latching(app_control_fault_E fault, bool live)
+{
+    if (app_control_data.motionEnabled && live)
+    {
+        app_control_data.latched[fault] = true;
+    }
+    return live || app_control_data.latched[fault];
 }
 
 
@@ -129,10 +192,19 @@ static app_control_fault_E app_control_private_processFaults(void)
 {
     app_control_data.fault[APP_CONTROL_FAULT_COG] = dev_cogManager_isAllRunning() == false;
     app_control_data.fault[APP_CONTROL_FAULT_WATCHDOG] = watchdog_isAllAlive() == false;
-    app_control_data.fault[APP_CONTROL_FAULT_ESD_POWER] = HAL_GPIO_getActive(HAL_GPIO_ESD_POWER);
-    app_control_data.fault[APP_CONTROL_FAULT_ESD_SWITCH] = HAL_GPIO_getActive(HAL_GPIO_ESD_SWITCH);
-    app_control_data.fault[APP_CONTROL_FAULT_ESD_UPPER] = HAL_GPIO_getActive(HAL_GPIO_ESD_UPPER);
-    app_control_data.fault[APP_CONTROL_FAULT_ESD_LOWER] = HAL_GPIO_getActive(HAL_GPIO_ESD_LOWER);
+    /* The emergency-stop inputs LATCH (app_control_private_latching). The
+     * request for motion outlives a fault, so one recomputed from the live
+     * input alone would let the machine come back by itself the moment the
+     * emergency stop was released or its circuit reset -- and a press shorter
+     * than the host's state poll would stop a test and leave no reason behind. */
+    app_control_data.fault[APP_CONTROL_FAULT_ESD_POWER] =
+        app_control_private_latching(APP_CONTROL_FAULT_ESD_POWER, HAL_GPIO_getActive(HAL_GPIO_ESD_POWER));
+    app_control_data.fault[APP_CONTROL_FAULT_ESD_SWITCH] =
+        app_control_private_latching(APP_CONTROL_FAULT_ESD_SWITCH, HAL_GPIO_getActive(HAL_GPIO_ESD_SWITCH));
+    app_control_data.fault[APP_CONTROL_FAULT_ESD_UPPER] =
+        app_control_private_latching(APP_CONTROL_FAULT_ESD_UPPER, HAL_GPIO_getActive(HAL_GPIO_ESD_UPPER));
+    app_control_data.fault[APP_CONTROL_FAULT_ESD_LOWER] =
+        app_control_private_latching(APP_CONTROL_FAULT_ESD_LOWER, HAL_GPIO_getActive(HAL_GPIO_ESD_LOWER));
     /* The MOTOR cog runs dev_servo. Asked directly rather than through a local
      * `actuator_*` macro: app_motion.c already owns that abstraction, and a
      * second copy here bought one call site an alias that hid what it reads.
@@ -168,24 +240,36 @@ static app_control_fault_E app_control_private_processFaults(void)
      * own cause disappear, clear, re-enable and drive into the same jam moments
      * later, indefinitely.
      *
-     * Latching only while motion is ENABLED is what makes the acknowledgement
-     * take effect on the first press: processRequests has already cleared both
-     * the latch and motionEnabled by the time this runs, so the stall the
-     * driver is still reporting this tick -- the residue of the one that
-     * stopped the machine -- does not re-arm it. */
-    if (app_control_data.motionEnabled && dev_servo_isStalled(DEV_SERVO_CHANNEL_MAIN))
-    {
-        app_control_data.stallLatched = true;
-    }
-    app_control_data.fault[APP_CONTROL_FAULT_SERVO_STALL] = app_control_data.stallLatched;
+     * A stall reported while motion is off is not a fault at all -- nothing is
+     * being driven -- so only the latch is reported, never the live flag. */
+    (void)app_control_private_latching(APP_CONTROL_FAULT_SERVO_STALL,
+                                       dev_servo_isStalled(DEV_SERVO_CHANNEL_MAIN));
+    app_control_data.fault[APP_CONTROL_FAULT_SERVO_STALL] =
+        app_control_data.latched[APP_CONTROL_FAULT_SERVO_STALL];
 
-    // Select the first fault as the reason
+    /* Overload: the load cell past its capacity by the overload margin, in
+     * either direction, in any state -- a jog can crush a cell as surely as a
+     * test can. It is judged on the machine's own force, since the sample
+     * frame's zero is wherever the operator last set it. The check is off
+     * while the profile gives no capacity (overloadForce 0).
+     *
+     * It latches for the reason the stall does: stopping the drive lets the
+     * load relax, so the reading that raised the fault is gone a moment after
+     * the fault has acted. */
+    const int32_t machineForce = app_gauge_getForce(APP_GAUGE_COORD_MACHINE);
+    const bool overloaded = (app_control_data.nvram.overloadForce > 0) &&
+                            ((machineForce > app_control_data.nvram.overloadForce) ||
+                             (machineForce < -app_control_data.nvram.overloadForce));
+    app_control_data.fault[APP_CONTROL_FAULT_FORCE_OVERLOAD] =
+        app_control_private_latching(APP_CONTROL_FAULT_FORCE_OVERLOAD, overloaded);
+
+    /* The first active fault in the reporting order is the reason. */
     app_control_fault_E fault = APP_CONTROL_FAULT_NONE;
-    for (app_control_fault_E index = (app_control_fault_E)0U; index < APP_CONTROL_FAULT_COUNT; index++)
+    for (uint32_t index = 0U; index < APP_CONTROL_FAULT_PRIORITY_COUNT; index++)
     {
-        if (app_control_data.fault[index])
+        if (app_control_data.fault[app_control_faultPriority[index]])
         {
-            fault = index;
+            fault = app_control_faultPriority[index];
             break;
         }
     }
@@ -296,6 +380,15 @@ void app_control_init(int lock)
     MachineProfile machineProfile;
     (void)dev_nvram_getChannelData(DEV_NVRAM_CHANNEL_MACHINE_PROFILE, &machineProfile, sizeof(MachineProfile));
     app_control_data.nvram.maxMachineTension = machineProfile.maxForceTensile;
+    /* int64 intermediate: a 20 kN cell is 20,000,000 mN, and that times 120
+     * is past int32. One expression and no ternary around it, which is the
+     * 64-bit form flexcc compiles. */
+    app_control_data.nvram.overloadForce = 0;
+    if (machineProfile.loadCellCapacity > 0)
+    {
+        app_control_data.nvram.overloadForce =
+            (int32_t)(((int64_t)machineProfile.loadCellCapacity * APP_CONTROL_OVERLOAD_PERCENT) / 100);
+    }
 }
 
 void app_control_run(void)

@@ -37,6 +37,16 @@
  **********************************************************************/
 #define MOTION_QUEUE_SIZE 100
 
+/* Homing asked for with the upper limit switch already active: how far the
+ * carriage is moved off the switch to release it, as a multiple of the
+ * profile's homingOffset (the distance that clears the switch after a normal
+ * homing), and the least it is moved when the profile sets no offset. A
+ * switch still active after that travel is one that is not going to release
+ * -- stuck, or its loop open -- and homing fails without redefining the
+ * position. */
+#define APP_MOTION_HOMING_RELEASE_OFFSETS 2
+#define APP_MOTION_HOMING_RELEASE_MIN_MM 2
+
 #define APP_MOTION_LOCK_REQ() HAL_lock_try(app_motion_data.lock)
 #define APP_MOTION_LOCK_REQ_BLOCK()        \
     while (APP_MOTION_LOCK_REQ() == false) \
@@ -92,7 +102,12 @@ typedef struct
     uint32_t handovers;  /* staged moves the servo has switched to (dev_servo_getHandovers) */
     int32_t gaugeSetpointSteps;   /* where the move ENDS                */
     int32_t gaugeCommandedSteps;  /* where the trajectory is RIGHT NOW  */     /* actuator_getTarget() — commanded target */
+    /* The travel limits (the soft-limit switches). Position is the distance
+     * between the jaws, so it DECREASES toward the upper switch, at the top of
+     * the column where the jaws meet -- the end homing seeks -- and INCREASES
+     * toward the lower one. */
     bool endstopUpperActive;        /* HAL_GPIO_getActive(ENDSTOP_UPPER)      */
+    bool endstopLowerActive;        /* HAL_GPIO_getActive(ENDSTOP_LOWER)      */
 } app_motion_dataInputs_t;
 
 typedef struct
@@ -146,6 +161,18 @@ typedef struct
      * for it ends as "Test Complete!", with the refusal only in the debug log. */
     bool waveformRefused;
 
+    /* Set by a move handler that dropped its move this tick (a travel limit, a
+     * failed homing); the state machine then stops the drive, empties the
+     * queue and returns to WAITING before the tick ends. */
+    bool abortNow;
+    /* Why, latched until app_motion_takeAbort() reads it. */
+    app_motion_abort_E abort;
+    /* One notification per activation of each travel limit: a jog button held
+     * against a limit is refused every time, and told once. Cleared when the
+     * switch releases. */
+    bool upperLimitNotified;
+    bool lowerLimitNotified;
+
     app_motion_outputs_t output;
 
     app_motion_move_t queueBuffer[MOTION_QUEUE_SIZE];
@@ -169,10 +196,104 @@ static void app_motion_private_stageNext(void);
 static void app_motion_private_takeHandover(void);
 static void app_motion_private_capStaged(void);
 static bool app_motion_private_waveform_run(void);
+static void app_motion_private_abort(app_motion_abort_E reason);
+static bool app_motion_private_limitBlocks(int32_t travel);
+static void app_motion_private_limitStop(bool upper);
+static bool app_motion_private_stopAtLimit(bool closedLoop);
 
 /**********************************************************************
  * Private Functions
  **********************************************************************/
+
+/* Drop the running move and everything queued behind it. The handler that
+ * calls this only records it: the state machine does the stopping, once, after
+ * the handler returns (app_motion_private_getDesiredState). */
+static void app_motion_private_abort(app_motion_abort_E reason)
+{
+    app_motion_data.abortNow = true;
+    APP_MOTION_LOCK_REQ_BLOCK();
+    if (app_motion_data.abort == APP_MOTION_ABORT_NONE)
+    {
+        app_motion_data.abort = reason;
+    }
+    APP_MOTION_LOCK_REL();
+}
+
+/* Whether travel of `travel` counts -- only its sign matters -- heads into a
+ * travel limit that is active. The upper switch guards decreasing position and
+ * the lower one increasing position, so a move AWAY from an active limit is
+ * never blocked: that is the way off it. */
+static bool app_motion_private_limitBlocks(int32_t travel)
+{
+    return ((travel < 0) && app_motion_data.inputs.endstopUpperActive) ||
+           ((travel > 0) && app_motion_data.inputs.endstopLowerActive);
+}
+
+/* A move heading into an active travel limit: it does not start, or it stops
+ * here, and the queue behind it goes with it -- a program that has lost a move
+ * is not the program that was asked for. */
+static void app_motion_private_limitStop(bool upper)
+{
+    if (upper)
+    {
+        if (app_motion_data.upperLimitNotified == false)
+        {
+            app_motion_data.upperLimitNotified = true;
+            app_notification_send(APP_NOTIFICATION_TYPE_WARNING, "%s",
+                                  "Upper travel limit reached: motion stopped. Only moves away from it are accepted.");
+        }
+    }
+    else if (app_motion_data.lowerLimitNotified == false)
+    {
+        app_motion_data.lowerLimitNotified = true;
+        app_notification_send(APP_NOTIFICATION_TYPE_WARNING, "%s",
+                              "Lower travel limit reached: motion stopped. Only moves away from it are accepted.");
+    }
+    else
+    {
+        /* already told */
+    }
+    DEBUG_WARNING("MOTION: %s travel limit active; move dropped\n", upper ? "upper" : "lower");
+    app_motion_private_abort(APP_MOTION_ABORT_TRAVEL_LIMIT);
+}
+
+/* The running position move against the travel limits, each tick: a limit
+ * that becomes active while the move still has to travel toward it stops the
+ * move. True when it did.
+ *
+ * "Still has to travel toward it" is asked of the trajectory (target against
+ * where the trajectory is now) and, in closed loop, of the carriage as well
+ * (target against the encoder), and both have to agree. The carriage alone
+ * would stop a move off a limit that has arrived and rests a count beyond its
+ * target, with the switch still pressed. The trajectory alone would stop a
+ * move of a count or two off a limit, whose trajectory starts from where the
+ * last move parked the setpoint, which can be on the far side of the new
+ * target from the encoder. Open loop has no encoder truth, so its trajectory
+ * decides. */
+static bool app_motion_private_stopAtLimit(bool closedLoop)
+{
+    const int32_t trajectory =
+        app_motion_data.inputs.gaugeSetpointSteps - app_motion_data.inputs.gaugeCommandedSteps;
+    const int32_t carriage = closedLoop
+                                 ? (app_motion_data.inputs.gaugeSetpointSteps - app_motion_data.inputs.positionSteps)
+                                 : trajectory;
+    bool stopped = false;
+    if ((trajectory < 0) && (carriage < 0) && app_motion_data.inputs.endstopUpperActive)
+    {
+        app_motion_private_limitStop(true);
+        stopped = true;
+    }
+    else if ((trajectory > 0) && (carriage > 0) && app_motion_data.inputs.endstopLowerActive)
+    {
+        app_motion_private_limitStop(false);
+        stopped = true;
+    }
+    else
+    {
+        /* not heading into an active limit */
+    }
+    return stopped;
+}
 
 static void app_motion_private_processInputs(void)
 {
@@ -196,6 +317,15 @@ static void app_motion_private_processInputs(void)
     app_motion_data.inputs.gaugeSetpointSteps = actuator_getTarget();
     app_motion_data.inputs.gaugeCommandedSteps = actuator_getSetpoint();
     app_motion_data.inputs.endstopUpperActive = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_UPPER);
+    app_motion_data.inputs.endstopLowerActive = HAL_GPIO_getActive(HAL_GPIO_ENDSTOP_LOWER);
+    if (app_motion_data.inputs.endstopUpperActive == false)
+    {
+        app_motion_data.upperLimitNotified = false;
+    }
+    if (app_motion_data.inputs.endstopLowerActive == false)
+    {
+        app_motion_data.lowerLimitNotified = false;
+    }
 }
 
 static void app_motion_private_processOutputs(void)
@@ -249,19 +379,88 @@ static app_motion_state_E app_motion_private_getDesiredState(void)
         default:
             break;
         }
+        if (app_motion_data.abortNow)
+        {
+            /* The handler dropped its move (app_motion_private_abort): stop
+             * the drive where it is and take nothing more from the queue. The
+             * drive stays enabled and holds, so the next move -- the one that
+             * backs off a limit -- can run. */
+            app_motion_data.abortNow = false;
+            actuator_stop();
+            lib_staticQueue_empty(&app_motion_data.queue);
+            app_motion_data.staged = false;
+            app_motion_data.waveformRunning = false;
+            app_motion_data.homeState = APP_MOTION_HOME_START;
+            desiredState = APP_MOTION_WAITING;
+        }
     }
     return desiredState;
 }
 
+/* G28: find the upper limit switch and define the position there.
+ *
+ * The reference is the switch's EDGE -- the point where it goes active as the
+ * carriage arrives -- so the seek has to start with the switch released. A
+ * switch that is already active says only that the carriage is somewhere
+ * inside its actuation zone, or that its loop is open (a normally-closed
+ * switch reads active with a wire off, wherever the carriage is), and taking
+ * the position from that puts the zero wherever the carriage happens to stand.
+ * So homing first moves off an active switch, starts the seek once it
+ * releases, and fails -- leaving the position alone -- if it does not release
+ * or is never found.
+ *
+ * The seek is the one move allowed toward the upper limit while it goes
+ * active: finding it is the point. The two moves away from it obey the lower
+ * limit like any other. */
 static bool app_motion_private_homing_run(void)
 {
     bool complete = false;
+    const int32_t homingFeedrate = app_motion_data.homingVelocity * app_motion_data.stepsPerMM;
+    const int32_t seekSteps = app_motion_data.stepsPerMM * app_motion_data.maxPosition;
     switch (app_motion_data.homeState)
     {
     case APP_MOTION_HOME_START:
-        DEBUG_INFO("%s", "Homing Moving\n");
-        actuator_move(app_motion_data.inputs.positionSteps - app_motion_data.stepsPerMM * app_motion_data.maxPosition, app_motion_data.homingVelocity * app_motion_data.stepsPerMM);
-        app_motion_data.homeState = APP_MOTION_HOME_MOVING;
+        if (app_motion_data.inputs.endstopUpperActive)
+        {
+            int32_t releaseMM = APP_MOTION_HOMING_RELEASE_OFFSETS * app_motion_data.homingOffset;
+            if (releaseMM < APP_MOTION_HOMING_RELEASE_MIN_MM)
+            {
+                releaseMM = APP_MOTION_HOMING_RELEASE_MIN_MM;
+            }
+            DEBUG_INFO("Homing: upper limit already active, releasing over %d mm\n", releaseMM);
+            actuator_move(app_motion_data.inputs.positionSteps + (app_motion_data.stepsPerMM * releaseMM),
+                          homingFeedrate);
+            app_motion_data.homeState = APP_MOTION_HOME_RELEASE;
+        }
+        else
+        {
+            DEBUG_INFO("%s", "Homing Moving\n");
+            actuator_move(app_motion_data.inputs.positionSteps - seekSteps, homingFeedrate);
+            app_motion_data.homeState = APP_MOTION_HOME_MOVING;
+        }
+        break;
+    case APP_MOTION_HOME_RELEASE:
+        if (app_motion_data.inputs.endstopLowerActive)
+        {
+            app_motion_private_limitStop(false);
+        }
+        else if (app_motion_data.inputs.endstopUpperActive == false)
+        {
+            DEBUG_INFO("%s", "Homing: upper limit released, seeking\n");
+            actuator_move(app_motion_data.inputs.positionSteps - seekSteps, homingFeedrate);
+            app_motion_data.homeState = APP_MOTION_HOME_MOVING;
+        }
+        else if (app_motion_data.inputs.atTarget)
+        {
+            DEBUG_ERROR("%s", "Homing failed: the upper limit did not release\n");
+            app_notification_send(APP_NOTIFICATION_TYPE_ERROR, "%s",
+                                  "Homing failed: the upper limit switch stayed active. Check the switch and its wiring.");
+            app_motion_private_abort(APP_MOTION_ABORT_HOMING_FAILED);
+        }
+        else
+        {
+            /* still moving off the switch */
+        }
         break;
     case APP_MOTION_HOME_MOVING:
         if (app_motion_data.inputs.endstopUpperActive)
@@ -273,8 +472,17 @@ static bool app_motion_private_homing_run(void)
         }
         else if (app_motion_data.inputs.atTarget)
         {
-            DEBUG_INFO("%s", "Homing Failed\n");
-            app_motion_data.homeState = APP_MOTION_HOME_COMPLETE;
+            /* The whole travel was covered without the switch going active.
+             * The position is left as it was: there is nothing to define it
+             * from. */
+            DEBUG_ERROR("%s", "Homing failed: the upper limit was not found\n");
+            app_notification_send(APP_NOTIFICATION_TYPE_ERROR, "%s",
+                                  "Homing failed: the upper limit switch was not found.");
+            app_motion_private_abort(APP_MOTION_ABORT_HOMING_FAILED);
+        }
+        else
+        {
+            /* still seeking */
         }
         break;
     case APP_MOTION_HOME_ENDSTOP:
@@ -290,12 +498,16 @@ static bool app_motion_private_homing_run(void)
                 IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK,
                 LIB_UTILITY_MM_TO_NM(app_motion_data.jawOffset));
             actuator_setPosition(jawOffsetSteps);
-            actuator_move(jawOffsetSteps + homingOffsetSteps, (app_motion_data.homingVelocity * app_motion_data.stepsPerMM));
+            actuator_move(jawOffsetSteps + homingOffsetSteps, homingFeedrate);
             app_motion_data.homeState = APP_MOTION_HOME_BACKOFF;
         }
         break;
     case APP_MOTION_HOME_BACKOFF:
-        if (app_motion_data.inputs.atTarget)
+        if (app_motion_data.inputs.endstopLowerActive)
+        {
+            app_motion_private_limitStop(false);
+        }
+        else if (app_motion_data.inputs.atTarget)
         {
             DEBUG_INFO("%s", "Homing complete\n");
             app_motion_data.homeState = APP_MOTION_HOME_COMPLETE;
@@ -339,7 +551,13 @@ static void app_motion_private_moveManager_start(void)
                                                 &steps, &feedrate);
             DEBUG_INFO("G0 command moving to steps %d at %d steps/s\n", steps, feedrate);
             DEBUG_INFO("moving from position (mm) %d to setpoint (mm) %d\n", app_motion_data.inputs.positionSteps / app_motion_data.stepsPerMM, steps / app_motion_data.stepsPerMM);
-            if (openLoop)
+            if (app_motion_private_limitBlocks(steps - from))
+            {
+                /* Deeper into a limit that is already active: not sent to the
+                 * drive at all. A move the other way is the way off it. */
+                app_motion_private_limitStop(steps < from);
+            }
+            else if (openLoop)
             {
                 actuator_moveOpenLoop(steps, feedrate);
             }
@@ -403,7 +621,15 @@ static void app_motion_private_moveManager_start(void)
          * through a loading nobody asked for and file the result under the
          * shape that was requested. The driver owns the set of profiles that
          * exist, so it owns the conversion too. */
-        if (!dev_servo_waveShapeFromWire(req->shape, &wf.shape))
+        if (app_motion_data.inputs.endstopUpperActive || app_motion_data.inputs.endstopLowerActive)
+        {
+            /* A wave travels both ways from where it starts and comes back to
+             * it every cycle, so one that starts on a travel limit returns to
+             * that limit for as long as it runs. It is not started. */
+            app_motion_data.waveformRunning = false;
+            app_motion_private_limitStop(app_motion_data.inputs.endstopUpperActive);
+        }
+        else if (!dev_servo_waveShapeFromWire(req->shape, &wf.shape))
         {
             app_motion_data.waveformRunning = false;
             app_motion_data.waveformRefused = true;
@@ -456,6 +682,13 @@ static bool app_motion_private_waveform_run(void)
     {
         return true;
     }
+    if (app_motion_data.inputs.endstopUpperActive || app_motion_data.inputs.endstopLowerActive)
+    {
+        /* A limit can only have gone active because the wave carried the
+         * carriage onto it, and the next cycle would carry it there again. */
+        app_motion_private_limitStop(app_motion_data.inputs.endstopUpperActive);
+        return false;
+    }
     return app_motion_data.inputs.atTarget;
 }
 
@@ -506,9 +739,13 @@ static void app_motion_private_stageNext(void)
         }
         int32_t steps = 0;
         int32_t feedrate = 0;
+        /* A move that would head into an active travel limit is not handed to
+         * the servo ahead of time: it waits its turn in the queue and is
+         * refused there, with the running move already settled. */
         if (((next.g == G0_RAPID_MOVE) || (next.g == G1_LINEAR_MOVE)) &&
             app_motion_private_linearMove(&next, absolute, app_motion_data.inputs.gaugeSetpointSteps, &steps,
-                                          &feedrate))
+                                          &feedrate) &&
+            (app_motion_private_limitBlocks(steps - app_motion_data.inputs.gaugeSetpointSteps) == false))
         {
             actuator_stageNext(steps, feedrate);
             app_motion_data.staged = true;
@@ -564,7 +801,11 @@ static bool app_motion_private_moveManager_run(void)
     {
     case G0_RAPID_MOVE:
     case G1_LINEAR_MOVE:
-        if (app_motion_data.staged)
+        if (app_motion_private_stopAtLimit(true))
+        {
+            /* dropped: the state machine stops the drive */
+        }
+        else if (app_motion_data.staged)
         {
             if (app_motion_data.inputs.handovers != app_motion_data.handoversSeen)
             {
@@ -588,7 +829,10 @@ static bool app_motion_private_moveManager_run(void)
         }
         break;
     case G124_OPEN_LOOP_MOVE:
-        moveComplete = app_motion_data.inputs.atTarget;
+        if (app_motion_private_stopAtLimit(false) == false)
+        {
+            moveComplete = app_motion_data.inputs.atTarget;
+        }
         break;
     case G2_CW_ARC_MOVE:
     case G3_CCW_ARC_MOVE:
@@ -720,6 +964,15 @@ bool app_motion_takeWaveformRefused(void)
     app_motion_data.waveformRefused = false;
     APP_MOTION_LOCK_REL();
     return refused;
+}
+
+app_motion_abort_E app_motion_takeAbort(void)
+{
+    APP_MOTION_LOCK_REQ_BLOCK();
+    const app_motion_abort_E reason = app_motion_data.abort;
+    app_motion_data.abort = APP_MOTION_ABORT_NONE;
+    APP_MOTION_LOCK_REL();
+    return reason;
 }
 
 int32_t app_motion_getCommandedPosition(void)

@@ -54,12 +54,30 @@ typedef enum
 typedef enum
 {
     APP_MOTION_HOME_START,
+    /* The upper travel limit was already active when homing was asked for:
+     * the carriage is first moved off it, and the seek starts once the switch
+     * has released (see app_motion_private_homing_run). */
+    APP_MOTION_HOME_RELEASE,
     APP_MOTION_HOME_MOVING,
     APP_MOTION_HOME_ENDSTOP,
     APP_MOTION_HOME_BACKOFF,
     APP_MOTION_HOME_COMPLETE,
     APP_MOTION_HOME_COUNT,
 } app_motion_home_E;
+
+/* Why app_motion dropped the move it was running and everything queued behind
+ * it. Read with app_motion_takeAbort(). */
+typedef enum
+{
+    APP_MOTION_ABORT_NONE,
+    /* A move was heading into an active travel limit (ENDSTOP_UPPER guards
+     * decreasing position, ENDSTOP_LOWER increasing position): refused before
+     * it started, or stopped once the limit became active. */
+    APP_MOTION_ABORT_TRAVEL_LIMIT,
+    /* G28 could not establish the position reference: the upper limit switch
+     * did not release, or was never found. The position was left as it was. */
+    APP_MOTION_ABORT_HOMING_FAILED,
+} app_motion_abort_E;
 
 /* A G123 waveform, in the units it arrives in. One cycle is four segments in
  * phase order: hold at +A, traverse down, hold at -A, traverse up.
@@ -112,6 +130,13 @@ bool app_motion_isIdle(void);
 // app_testManagement so a test whose waveform never ran does not end as
 // "Test Complete!".
 bool app_motion_takeWaveformRefused(void);
+
+// Why motion dropped its running move and its queue since the last call
+// (a travel limit, a failed homing), or APP_MOTION_ABORT_NONE; reading it
+// clears the latch. app_testManagement reads it every cycle, so a test whose
+// program was cut short ends with that reason and a stale one never reaches a
+// later test.
+app_motion_abort_E app_motion_takeAbort(void);
 
 // Getters
 int32_t app_motion_getSetpoint(void);

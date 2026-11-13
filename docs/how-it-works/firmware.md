@@ -323,12 +323,20 @@ into "motion is off."
 
 - **Faults** force `DISABLED`. They are recomputed from live inputs every tick
   (cog liveness, watchdog, the ESD inputs, the servo loop and force gauge being
-  alive), so they clear when the cause does. The servo stall is the one that
-  latches: only a motion-disable request clears it.
+  alive, the force against 120% of the load cell's capacity). The four ESD
+  faults, `FORCE_OVERLOAD` and `SERVO_STALL` latch: one seen while motion is
+  enabled stands until a motion-disable request clears it. The rest clear when
+  the cause does. Simultaneous faults are reported cause first, from a table in
+  `app_control.c`, so an ESD input is named ahead of the ESD power it cuts.
 - **Restrictions** select `RESTRICTED`, where `app_motion` caps the feedrate at
   the profile's restricted velocity: machine tension, the end stops, the door
   and, while a test runs, the sample's force and length limits mirrored from
   `app_monitor` (whose flags also make `app_testManagement` stop the test).
+- **Travel limits** are enforced by `app_motion` itself: a move heading into an
+  active end stop is refused or stopped, and its queue dropped, which ends a
+  running test. `ENDSTOP_UPPER` guards decreasing position, `ENDSTOP_LOWER`
+  increasing position. G28 moves off an upper end stop that is already active
+  before it seeks it.
 
 ## Tests run from SD, host-free
 

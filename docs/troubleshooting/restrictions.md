@@ -12,6 +12,9 @@ What a restriction does:
 - **It caps the speed** of every move at **Restricted Velocity** from the
   [machine configuration](../user-guide/machine-configuration.md), including
   one already under way.
+- **An end stop also stops travel toward it.** A move heading into an active
+  end stop is stopped, and further moves that way are refused, in a jog and in
+  a test. A move away from it runs. A waveform does not start on an end stop.
 - **It clears by itself** as soon as the condition ends.
 
 !!! warning "Set Restricted Velocity"
@@ -19,7 +22,7 @@ What a restriction does:
     nothing slows down. Set it to a speed you're comfortable backing off an
     end stop at.
 
-The two sample limits also **stop a running test**.
+The two sample limits and the two end stops also **stop a running test**.
 
 Only one restriction is shown at a time: the first in the order below.
 
@@ -59,9 +62,9 @@ Only checked while a test is running. Sample force passed **Max force** in the s
 
 **The carriage is on the upper end stop.**
 
-The upper end stop switch is active.
+The upper end stop switch is active: the jaws are as close together as the machine allows. A move that would bring them closer is stopped and refused.
 
-**What to do:** Jog down, off the switch.
+**What to do:** Jog away from the switch. While it is active the machine accepts only a move that increases **Machine Position** (**+ Jog up**).
 
 ## LOWER_ENDSTOP
 
@@ -69,9 +72,9 @@ The upper end stop switch is active.
 
 **The carriage is on the lower end stop.**
 
-The lower end stop switch is active.
+The lower end stop switch is active: the jaws are as far apart as the machine allows. A move that would take them further apart is stopped and refused.
 
-**What to do:** Jog up, off the switch.
+**What to do:** Jog away from the switch. While it is active the machine accepts only a move that decreases **Machine Position** (**− Jog down**).
 
 ## DOOR
 
@@ -86,7 +89,7 @@ The door interlock switch is active.
 ## End stops and emergency-stop limits
 
 Each end of travel is watched twice. The **end stop** raises a restriction and
-slows the machine. The **emergency-stop limit** beyond it is part of the
+stops travel toward it. The **emergency-stop limit** beyond it is part of the
 emergency stop chain and raises an
 [`ESD_UPPER` / `ESD_LOWER`](faults.md#esd_upper) fault, which switches motion
 off.

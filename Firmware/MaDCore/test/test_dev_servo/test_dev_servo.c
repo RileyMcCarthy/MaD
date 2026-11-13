@@ -3588,6 +3588,96 @@ void test_the_parking_deadband_is_a_micron_of_any_encoder_scale(void)
     TEST_ASSERT_INT32_WITHIN(2, 10 * BENCH_COUNTS_PER_MM, parked);
 }
 
+/* The machine's own encoder: a 600 pulse/rev encoder on the belt's idler,
+ * 60 counts per mm. */
+#define BELT_COUNTS_PER_MM 60
+
+void test_the_speed_tuning_is_the_same_speed_on_any_encoder_scale(void)
+{
+    VIBES_TEST("servo.speed-tuning-follows-the-encoder-scale",
+               "src/DEV/dev_servo.c#dev_servo_init",
+               "machine profiles whose encoders count 8192 and 60 steps per mm, each giving no speed or acceleration limit of its own, and a drive asked to run far faster than it may");
+    VIBES_EXPECT_WHY("fallback-speed-is-3-mm-per-s",
+                     "on each the drive is held to 3 mm/s",
+                     "the fallback is there to be gentle, and the same number of counts a second is 137 times as fast on the belt's 60 counts/mm encoder as on an 8192 one");
+    VIBES_EXPECT("fallback-accel-is-30-mm-per-s2", "on each it gets there at 30 mm/s^2");
+    VIBES_EXPECT_WHY("integral-authority-is-10-mm-per-s",
+                     "on each the integral term may add at most 10 mm/s to the command",
+                     "the ceiling is a backstop on how hard a wound-up integral can push, and one sized in counts for a fine encoder is no ceiling at all on a coarse one");
+
+    static const int32_t scales[2] = { 8192, BELT_COUNTS_PER_MM };
+    for (unsigned i = 0U; i < 2U; i++)
+    {
+        const int32_t perMm = scales[i];
+        servo_init_scaled(0, 0, perMm, perMm);
+        TEST_ASSERT_EQUAL_INT32(10 * perMm, dev_servo_channelConfig[CH].integralLimit);
+
+        dev_servo_enable(CH, true);
+        dev_servo_setVelocity(CH, 1000 * perMm);
+        /* 3 mm/s at 30 mm/s^2 takes 100 ms: half way there after 50 ticks,
+         * and holding the limit long after. */
+        for (int t = 0; t < 50; t++) { tick_with_motion(); }
+        TEST_ASSERT_INT32_WITHIN((3 * perMm) / 10, (3 * perMm) / 2, dev_servo_getVelocity(CH));
+        for (int t = 0; t < 450; t++) { tick_with_motion(); }
+        TEST_ASSERT_INT32_WITHIN((3 * perMm) / 50 + 1, 3 * perMm, dev_servo_getVelocity(CH));
+    }
+}
+
+void test_a_gentle_ramp_on_a_coarse_encoder_is_still_a_ramp(void)
+{
+    VIBES_TEST("servo.integral-gate-follows-the-encoder-scale",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a 60 counts/mm machine limited to 10 mm/s^2, with the integral on, accelerating to 50 mm/s and then holding that speed");
+    VIBES_EXPECT_WHY("ramp-is-not-steady",
+                     "the integral learns nothing for as long as the trajectory accelerates",
+                     "what separates a ramp from a steady speed is an acceleration; this ramp changes the speed by 0.6 counts a second each tick, which a threshold fixed in counts for a fine encoder reads as standing still");
+    VIBES_EXPECT("cruise-is-steady", "once the speed holds, the trajectory counts as steady and the integral may work");
+
+    servo_init_scaled(50 * BELT_COUNTS_PER_MM, 10 * BELT_COUNTS_PER_MM, BELT_COUNTS_PER_MM, BELT_COUNTS_PER_MM);
+    dev_servo_setGains(10000, 50000);
+    dev_servo_enable(CH, true);
+    dev_servo_moveTo(CH, 2000 * BELT_COUNTS_PER_MM, 50 * BELT_COUNTS_PER_MM);
+
+    /* 50 mm/s at 10 mm/s^2 is a five second ramp. */
+    for (int t = 0; t < 4900; t++)
+    {
+        tick_with_motion();
+        TEST_ASSERT_EQUAL_UINT32(0U, dev_servo_data.channel[CH].steadyUs);
+        TEST_ASSERT_EQUAL_FLOAT(0.0f, dev_servo_data.channel[CH].integral);
+    }
+    for (int t = 0; t < 1100; t++) { tick_with_motion(); }
+    TEST_ASSERT_TRUE(dev_servo_data.channel[CH].steadyUs >= 500000U);
+    TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+}
+
+void test_a_move_parks_on_the_belt_encoder(void)
+{
+    VIBES_TEST("servo.move-parks-at-60-counts-per-mm",
+               "src/DEV/dev_servo.c#dev_servo_run",
+               "a 60 counts/mm machine with the shipped speed and acceleration limits, making a 10 mm move at 5 mm/s and the same move back");
+    VIBES_EXPECT_WHY("arrives-within-two-counts",
+                     "each move reports arrival with the encoder within two counts of its target",
+                     "one count is 17 um here, so the parking band is the two-count floor, the tightest an encoder this coarse can hold");
+    VIBES_EXPECT("no-stall", "no stall is reported on either move");
+
+    servo_init_scaled(50 * BELT_COUNTS_PER_MM, 600 * BELT_COUNTS_PER_MM, BELT_COUNTS_PER_MM, BELT_COUNTS_PER_MM);
+    dev_servo_enable(CH, true);
+    static const int32_t targets[2] = { 10 * BELT_COUNTS_PER_MM, 0 };
+    for (unsigned i = 0U; i < 2U; i++)
+    {
+        dev_servo_moveTo(CH, targets[i], 5 * BELT_COUNTS_PER_MM);
+        int ticks = 0;
+        while ((ticks < 6000) && !dev_servo_atTarget(CH))
+        {
+            tick_with_motion();
+            ticks++;
+        }
+        TEST_ASSERT_TRUE(dev_servo_atTarget(CH));
+        TEST_ASSERT_INT32_WITHIN(2, targets[i], d_encoderValue);
+        TEST_ASSERT_FALSE(dev_servo_isStalled(CH));
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -3682,5 +3772,8 @@ int main(void)
     RUN_TEST(test_the_integral_nulls_a_steady_load_while_moving);
     RUN_TEST(test_the_integral_nulls_a_steady_load_while_holding);
     RUN_TEST(test_the_parking_deadband_is_a_micron_of_any_encoder_scale);
+    RUN_TEST(test_the_speed_tuning_is_the_same_speed_on_any_encoder_scale);
+    RUN_TEST(test_a_gentle_ramp_on_a_coarse_encoder_is_still_a_ramp);
+    RUN_TEST(test_a_move_parks_on_the_belt_encoder);
     return UNITY_END();
 }

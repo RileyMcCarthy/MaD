@@ -53,6 +53,15 @@
 //!   same on `P9` and `P10`: `R40` and `R41` pull a released output up.
 //!   The bench, the probes and the open collector's three changes are the
 //!   cases' own, added to the file as loaded; the file is unchanged.
+//! - **The firmware's limits.** A full-speed jog toward the upper travel
+//!   limit stops where its switch opens, a jog further that way moves
+//!   nothing, a jog away runs, and homing from the limit takes its reference
+//!   on a fresh approach to the switch. With a card whose machine profile
+//!   rates the load cell at 2 N, a jog into the sample faults at 120 % of
+//!   that and the drive is disabled. An emergency stop, its loop closed from
+//!   the bench for 200 ms (the machine's kind cannot press one), holds the
+//!   machine off after it is released, until a request for motion off
+//!   acknowledges it.
 //!
 //! Stepped (`TESTING.md` rule 9): the clock stepped before the project
 //! builds (the converter's protocol thread joins it as an actor), the
@@ -1385,10 +1394,37 @@ fn until_level(rig: &mut Rig, net: &str, level: Level, at: u64) -> u64 {
 /// step the board until the encoder comes to rest: its count, and the
 /// instant.
 fn jog(rig: &mut Rig, host: &mut HostPort, um: i32, at: u64) -> (i64, u64) {
+    jog_at(rig, host, um, JOG_SPEED_UM_S, JOG_WAIT_NS, at)
+}
+
+/// [`jog`] at `um_s` micrometres a second, the carriage at rest within
+/// `wait_ns`.
+fn jog_at(
+    rig: &mut Rig,
+    host: &mut HostPort,
+    um: i32,
+    um_s: i32,
+    wait_ns: u64,
+    at: u64,
+) -> (i64, u64) {
+    jog_resting(rig, host, um, um_s, wait_ns, REST_NS, at)
+}
+
+/// [`jog_at`], the carriage at rest once its encoder has held one count for
+/// `rest_ns`.
+fn jog_resting(
+    rig: &mut Rig,
+    host: &mut HostPort,
+    um: i32,
+    um_s: i32,
+    wait_ns: u64,
+    rest_ns: u64,
+    at: u64,
+) -> (i64, u64) {
     let mut at = at;
     for (g, x, f) in [
         (protocol::GCode::Incremental, 0, 0),
-        (protocol::GCode::RapidMove, um, JOG_SPEED_UM_S),
+        (protocol::GCode::RapidMove, um, um_s),
     ] {
         let mv = protocol::Move { g, x, f, p: 0 };
         let (acknowledged, answered) =
@@ -1403,11 +1439,11 @@ fn jog(rig: &mut Rig, host: &mut HostPort, um: i32, at: u64) -> (i64, u64) {
         let now = rig.encoder_count();
         if now != count {
             (count, since) = (now, at);
-        } else if at - since >= REST_NS {
+        } else if at - since >= rest_ns {
             return (count, at);
         }
         assert!(
-            at - first < JOG_WAIT_NS,
+            at - first < wait_ns,
             "the carriage was still moving {} ns after the jog of {um} um: {}",
             at - first,
             rig.summary("MACHINE")
@@ -1565,4 +1601,621 @@ fn the_firmware_jogs_the_carriage() {
         })
         .collect();
     assert!(unsourced.is_empty(), "{unsourced:?}");
+}
+
+// ============================================================
+// The firmware's limits: travel, overload, the emergency stop
+// ============================================================
+
+/// The machine's project with the firmware booted and motion enabled, as
+/// [`the_firmware_jogs_the_carriage`] brings it up: the rig, the host's
+/// port, and the instant the drive's enable input read high. `card`, when
+/// given, is the card in the module's socket in place of the one `make
+/// sd-image` writes; `machine` sets options of the machine's kind
+/// (`machine.rs`, "Options"). `None`, having said why, without the program.
+fn booted_with_motion(
+    case: &str,
+    bench: Bench,
+    card: Option<Vec<u8>>,
+    machine: &[(&str, f64)],
+) -> Option<(Rig, HostPort, u64)> {
+    let (dir, program) = images(case)?;
+    if let Some(card) = card {
+        std::fs::write(dir.join("build").join("sd.img"), card).expect("sd.img is writable");
+    }
+    let pty = dir.join("host.pty");
+    let mut project = load(&dir);
+    project
+        .set_component_option("HOST", "path", pty.to_str().expect("UTF-8"))
+        .expect("the file has a HOST");
+    for &(option, value) in machine {
+        project
+            .set_component_option("MACHINE", option, value)
+            .expect("the file has a MACHINE");
+    }
+    let mut rig = Rig::start(project, bench);
+    let mut host = HostPort::open(&pty);
+
+    let streamed = START_NS + program.len() as u64 * STAGE1_NS_PER_BYTE;
+    virtual_clock::wait_virtual_ns(streamed - SETTLE_NS);
+    let (_, answered_at) = ask(
+        &mut rig,
+        &mut host,
+        protocol::MSG_READ_FIRMWARE_VERSION,
+        streamed,
+    );
+    let (unfaulted, unfaulted_at) = settled(&mut rig, &mut host, answered_at);
+    let (acknowledged, acknowledged_at) = enable_motion(&mut rig, &mut host, unfaulted_at);
+    assert!(
+        acknowledged,
+        "the firmware refused to enable motion at {acknowledged_at} ns, after {unfaulted:?}"
+    );
+    let enabled_at = until_level(&mut rig, SC_ENA, Level::High, acknowledged_at);
+    Some((rig, host, enabled_at))
+}
+
+/// Step the board from `at` to `until`.
+fn step_until(rig: &mut Rig, at: &mut u64, until: u64) {
+    while *at < until {
+        step(rig, at);
+    }
+}
+
+/// The firmware's live sample, read by [`ask`].
+fn read_sample(rig: &mut Rig, host: &mut HostPort, at: u64) -> (protocol::Sample, u64) {
+    let (sample, at) = ask(rig, host, protocol::MSG_READ_SAMPLE, at);
+    let sample = protocol::Sample::decode(&sample)
+        .unwrap_or_else(|| panic!("the sample's payload decodes: {sample:02X?}"));
+    (sample, at)
+}
+
+/// Encoder counts for `mm` millimetres of carriage travel.
+fn counts(mm: f64) -> i64 {
+    (mm * COUNTS_PER_MM as f64).round() as i64
+}
+
+/// The jog onto the upper travel limit: 15 mm toward it at the profile's
+/// full 50 mm/s, from the carriage's start 10 mm short of the switch
+/// (`UPPER_MM`), so the carriage is still at speed when the switch opens.
+const ONTO_THE_LIMIT_UM: i32 = -15_000;
+const FULL_SPEED_UM_S: i32 = 50_000;
+
+/// How far past the switch the carriage may come to rest. The firmware
+/// brakes its trajectory at the profile's 600 mm/s², 2.1 mm from 50 mm/s;
+/// the trajectory is 1 mm ahead of the carriage when the switch opens (the
+/// drive's 20 ms lag at 50 mm/s); and the switch's loop and the control
+/// tick take a few milliseconds to be read: 3.36 mm measured, 4.5 mm with
+/// room, and short of the 5 mm the jog would go past the switch if nothing
+/// stopped it.
+const LIMIT_OVERRUN_MM: f64 = 4.5;
+
+/// The profile's homing figures (`dev_nvram_config.c`): the position homing
+/// defines at the switch, 25 mm, and the distance it backs off, 5 mm.
+const JAW_OFFSET_MM: f64 = 25.0;
+const HOMING_OFFSET_MM: f64 = 5.0;
+
+/// The board time homing may take from the limit: the move off the switch,
+/// the approach, the firmware's 1 s pause on the switch and the 5 mm back
+/// off at 10 mm/s, about 2.5 s; 8 s with room.
+const HOMING_WAIT_NS: u64 = 8_000_000_000;
+
+/// Where homing leaves the carriage, against where the switch opens plus
+/// the back-off: within the approach's own overrun at the homing speed,
+/// since the firmware takes its reference where the carriage comes to rest
+/// (10 mm/s: 0.08 mm of braking, the drive's 0.2 mm lag and the read of the
+/// switch; 0.47 mm measured), 0.8 mm with room. A reference taken where the
+/// carriage stood after the full-speed jog would be out by that jog's
+/// overrun as well, over 3 mm.
+const HOMED_WITHIN_MM: f64 = 0.8;
+
+#[test]
+fn the_firmware_holds_the_carriage_to_the_upper_travel_limit_and_homes_off_it() {
+    behaviour!(Test {
+        id: "mad-project.upper-travel-limit",
+        covers: Some("SIL/mad.toml"),
+        given: "the machine's project file, motion enabled; a host jogs 15 mm at 50 mm/s \
+                toward the upper travel limit 10 mm away, then 1 mm further, 1 mm back, and \
+                homes",
+    });
+    expect!(
+        "stops-at-the-limit",
+        "the first jog comes to rest within 4.5 mm past the point where the switch opens, \
+         short of the 15 mm it was sent",
+        "the firmware stops a move that is heading into a travel limit when the limit goes \
+         active, and brakes at the profile's acceleration"
+    );
+    expect!(
+        "restricted-not-faulted",
+        "a state read there gives the upper endstop as the restriction, with motion still \
+         enabled and no fault"
+    );
+    expect!(
+        "refuses-further",
+        "the jog further toward the limit is acknowledged and moves the carriage nowhere",
+        "a move deeper into an active limit is never sent to the drive"
+    );
+    expect!(
+        "moves-away",
+        "the jog away moves the carriage its 1 mm",
+        "away is the way off a limit"
+    );
+    expect!(
+        "homes-to-the-switch",
+        "homing from the open switch leaves the carriage 5 mm below where the switch opens, \
+         to within 0.8 mm, and the firmware reporting 30 mm",
+        "homing first moves off a switch that is already active and takes its reference \
+         where the switch goes active on the approach; taken where the carriage stood, it \
+         would be out by the 3 mm the full-speed jog overran"
+    );
+    let Some((mut rig, mut host, enabled_at)) =
+        booted_with_motion("upper-limit", Bench::default(), None, &[])
+    else {
+        return;
+    };
+    let switch = counts(mad_catalog::machine::UPPER_MM);
+
+    let (stopped, stopped_at) = jog_at(
+        &mut rig,
+        &mut host,
+        ONTO_THE_LIMIT_UM,
+        FULL_SPEED_UM_S,
+        JOG_WAIT_NS,
+        enabled_at,
+    );
+    let (at_limit, at_limit_at) = read_state(&mut rig, &mut host, stopped_at);
+    let (further, further_at) = jog(&mut rig, &mut host, -1_000, at_limit_at);
+    let (away, away_at) = jog(&mut rig, &mut host, 1_000, further_at);
+
+    let home = protocol::Move {
+        g: protocol::GCode::Home,
+        x: 0,
+        f: 0,
+        p: 0,
+    };
+    let (acknowledged, mut at) = write(
+        &mut rig,
+        &mut host,
+        protocol::MSG_WRITE_MANUAL_MOVE,
+        &home.encode(),
+        away_at,
+    );
+    assert!(acknowledged, "the firmware refused {home:?} at {at} ns");
+    let homing_from = at;
+    let homed_nm = ((JAW_OFFSET_MM + HOMING_OFFSET_MM) * 1e6) as i32;
+    let (mut count, mut since) = (rig.encoder_count(), at);
+    let reported = loop {
+        let (sample, read_at) = read_sample(&mut rig, &mut host, at);
+        at = read_at;
+        let now = rig.encoder_count();
+        if now != count {
+            (count, since) = (now, at);
+        }
+        if (sample.machine_position - homed_nm).abs() < 50_000 && at - since >= REST_NS {
+            break sample.machine_position;
+        }
+        assert!(
+            at - homing_from < HOMING_WAIT_NS,
+            "homing had not finished {} ns after it was asked for: the firmware reports \
+             {} nm; {}",
+            at - homing_from,
+            sample.machine_position,
+            rig.summary("MACHINE")
+        );
+        step_until(&mut rig, &mut at, read_at + 10_000_000);
+    };
+    let homed = rig.encoder_count();
+    let (after, after_at) = read_state(&mut rig, &mut host, at);
+    let _ = writeln!(
+        std::io::stderr(),
+        "the switch opens at {switch} counts; the jog onto it came to rest at {stopped} at \
+         {stopped_at} ns, {at_limit:?}; the jog further at {further}, the jog away at {away}; \
+         homed at {homed} counts, the firmware reporting {reported} nm, {after:?} at \
+         {after_at} ns; {}",
+        rig.summary("MACHINE")
+    );
+    rig.finish();
+
+    assert!(
+        stopped < switch && stopped > switch - counts(LIMIT_OVERRUN_MM),
+        "the jog onto the limit came to rest at {stopped}; the switch opens at {switch}"
+    );
+    assert!(
+        at_limit.restricted_reason == protocol::RestrictedReason::UpperEndstop
+            && at_limit.motion_enabled
+            && at_limit.faulted_reason == protocol::FaultedReason::None,
+        "the state at the limit: {at_limit:?}"
+    );
+    assert!(
+        (further - stopped).abs() <= DEADBAND_COUNTS,
+        "the jog further toward the limit moved the carriage from {stopped} to {further}"
+    );
+    assert!(
+        (away - (further + counts(1.0))).abs() <= 3 * DEADBAND_COUNTS,
+        "the jog away came to rest at {away}, from {further}"
+    );
+    let expected = switch + counts(HOMING_OFFSET_MM);
+    assert!(
+        (homed - expected).abs() <= counts(HOMED_WITHIN_MM),
+        "homing left the carriage at {homed}, against {expected}"
+    );
+    assert!(
+        after.faulted_reason == protocol::FaultedReason::None && after.motion_enabled,
+        "the state after homing: {after:?}"
+    );
+}
+
+/// The load cell's rated capacity in the firmware's failsafe profile
+/// (`dev_nvram_config.c`), millinewtons.
+const FAILSAFE_CAPACITY_MN: i32 = 100_000;
+
+/// A machine profile as the firmware keeps it on the card (`profile.bin`,
+/// the raw `MachineProfile` of `dev_nvram_machineProfile.h`: 20 bytes of
+/// name, then 16 little-endian 32-bit integers): the failsafe profile of
+/// `dev_nvram_config.c` with the encoder's and the drive's scales as given,
+/// and the load cell's capacity and its rated output at that capacity both
+/// scaled to `capacity_mn`: the same cell, so the force reads true, rated
+/// lower.
+fn profile(encoder_per_mm: i32, drive_per_mm: i32, capacity_mn: i32) -> Vec<u8> {
+    const FAILSAFE_SENSITIVITY_NV_V: i64 = -4_868_009;
+    let sensitivity = (FAILSAFE_SENSITIVITY_NV_V * i64::from(capacity_mn)
+        / i64::from(FAILSAFE_CAPACITY_MN)) as i32;
+    let mut record = vec![0u8; 20];
+    record[..3].copy_from_slice(b"SIL");
+    for field in [
+        encoder_per_mm, // encoderStepsPerMM
+        drive_per_mm,   // servoStepsPerMM
+        capacity_mn,    // loadCellCapacity, mN
+        sensitivity,    // loadCellSensitivity, nV/V at capacity
+        0,              // loadCellZeroBalance
+        100,            // maxPosition, mm
+        50,             // maxVelocity, mm/s
+        600,            // maxAcceleration, mm/s²
+        5_000,          // maxForceTensile, mN
+        10,             // homingVelocity, mm/s
+        5,              // homingOffset, mm
+        25,             // jawOffset, mm
+        0,              // restrictedVelocity: no cap
+        8_000,          // servoKp
+        0,              // servoKi
+        0,              // servoEnableActiveLow
+    ] {
+        record.extend_from_slice(&i32::to_le_bytes(field));
+    }
+    record
+}
+
+/// The card `make sd-image` writes, with `profile` as its `profile.bin`.
+fn card_with_profile(profile: Vec<u8>) -> Vec<u8> {
+    let mut root = p2iss::sdimage::Dir::new();
+    root.dir("test");
+    root.dir("gcode");
+    root.file("profile.bin", profile);
+    p2iss::sdimage::build(CARD_BYTES, &root).expect("the card image builds")
+}
+
+/// The load cell's rated capacity in the overload case's profile, 2 N, and
+/// the force the firmware faults past, 120 % of it.
+const RATED_MN: i32 = 2_000;
+const OVERLOAD_N: f64 = 2.4;
+
+/// Where the reference sample carries [`OVERLOAD_N`]: past the 15 mm of grip
+/// slack, 5 N over the 85 mm to the end of travel (`machine.rs`,
+/// `SamplePreset::SilLinearReference`), 55.8 mm.
+const OVERLOAD_AT_MM: f64 = mad_catalog::machine::GANTRY_SLACK_MM
+    + OVERLOAD_N * (mad_catalog::machine::TRAVEL_MM - mad_catalog::machine::GANTRY_SLACK_MM) / 5.0;
+
+/// The jog into the sample: 60 mm at 20 mm/s, 4.2 mm past the overload.
+const INTO_THE_SAMPLE_UM: i32 = 60_000;
+const INTO_THE_SAMPLE_UM_S: i32 = 20_000;
+const INTO_THE_SAMPLE_WAIT_NS: u64 = 6_000_000_000;
+
+/// How far past the overload the carriage may come to rest: the force
+/// converter's reading and the fault's control tick at 20 mm/s, then the
+/// drive's 20 ms lag, 0.4 mm; 2.5 mm with room, and short of the 60 mm the
+/// jog was sent.
+const OVERLOAD_OVERRUN_MM: f64 = 2.5;
+
+#[test]
+fn the_firmware_faults_when_a_jog_overloads_the_load_cell() {
+    behaviour!(Test {
+        id: "mad-project.overload-stops-a-jog",
+        covers: Some("SIL/mad.toml"),
+        given: "the machine's project file with a load cell rated 2 N, motion enabled; a host \
+                jogs 60 mm into the sample, which carries 2.4 N at 55.8 mm, and asks for \
+                motion again",
+    });
+    expect!(
+        "stops-at-the-overload",
+        "the carriage comes to rest between 55.8 mm and 58.3 mm, short of the 60 mm it was \
+         sent",
+        "the firmware faults when the force passes 120 percent of the cell's rated \
+         capacity, in a jog as in a test, and a fault disables the drive"
+    );
+    expect!(
+        "fault-named",
+        "a state read there gives the load cell overload as the fault, with motion off"
+    );
+    expect!(
+        "enable-refused",
+        "the request for motion, with the load still on the cell, is refused"
+    );
+    let Some((mut rig, mut host, enabled_at)) = booted_with_motion(
+        "overload",
+        Bench::default(),
+        Some(card_with_profile(profile(8_192, 8_192, RATED_MN))),
+        &[],
+    ) else {
+        return;
+    };
+
+    let (rest, rest_at) = jog_at(
+        &mut rig,
+        &mut host,
+        INTO_THE_SAMPLE_UM,
+        INTO_THE_SAMPLE_UM_S,
+        INTO_THE_SAMPLE_WAIT_NS,
+        enabled_at,
+    );
+    let (state, state_at) = read_state(&mut rig, &mut host, rest_at);
+    let (sample, sample_at) = read_sample(&mut rig, &mut host, state_at);
+    let (enabled_again, again_at) = enable_motion(&mut rig, &mut host, sample_at);
+    let _ = writeln!(
+        std::io::stderr(),
+        "the jog into the sample came to rest at {rest} counts at {rest_at} ns, the firmware \
+         reading {} mN; {state:?}; motion asked for again at {again_at} ns: {enabled_again}; \
+         {}",
+        sample.machine_force,
+        rig.summary("MACHINE")
+    );
+    rig.finish();
+
+    assert!(
+        rest >= counts(OVERLOAD_AT_MM) && rest <= counts(OVERLOAD_AT_MM + OVERLOAD_OVERRUN_MM),
+        "the carriage came to rest at {rest} counts; the sample carries {OVERLOAD_N} N at {}",
+        counts(OVERLOAD_AT_MM)
+    );
+    assert!(
+        state.faulted_reason == protocol::FaultedReason::ForceOverload && !state.motion_enabled,
+        "the state after the jog: {state:?}"
+    );
+    assert!(
+        !enabled_again,
+        "the firmware enabled motion with {} mN on a cell rated {RATED_MN} mN",
+        sample.machine_force
+    );
+}
+
+/// The emergency stop, pressed and released: the loop's `+` (`J13.2`) at
+/// the loop supply's 5 V from 2.0 s to 2.2 s of board time, and at 0 V, no
+/// current, before and after. The machine's own contact on that loop rests
+/// open and is never pressed (`machine.rs`, "Not modelled"), so the bench
+/// closes the loop in its place. The firmware is up and motion enabled
+/// about 1.3 s in.
+const ESTOP_PRESSED_NS: u64 = 2_000_000_000;
+const ESTOP_RELEASED_NS: u64 = 2_200_000_000;
+const ESTOP_LOOP_V: f64 = 5.0;
+
+#[test]
+fn an_emergency_stop_holds_the_machine_off_until_it_is_acknowledged() {
+    behaviour!(Test {
+        id: "mad-project.emergency-stop-latches",
+        covers: Some("SIL/mad.toml"),
+        given: "the machine's project file with motion enabled; the emergency stop's loop is \
+                closed for 200 ms and opened again, and a host then asks for motion off and \
+                for motion on",
+    });
+    expect!(
+        "stops-while-pressed",
+        "with the loop closed, a state read gives the emergency stop as the fault, with \
+         motion off and the drive's enable input low"
+    );
+    expect!(
+        "held-after-release",
+        "200 ms after the loop opens, the state still gives the emergency stop as the fault, \
+         with motion off and the drive's enable low",
+        "the firmware keeps the request for motion through a fault, so a fault that cleared \
+         with its input would switch the drive back on with nobody asking"
+    );
+    expect!(
+        "acknowledged-by-motion-off",
+        "after the request for motion off, a state read gives no fault, with motion off"
+    );
+    expect!(
+        "enabled-on-request",
+        "the request for motion on is then acknowledged, and the drive's enable input reads \
+         high again"
+    );
+    let pressed_and_released = source(vec![
+        Step {
+            at_ns: 0,
+            volts: 0.0,
+        },
+        Step {
+            at_ns: ESTOP_PRESSED_NS,
+            volts: ESTOP_LOOP_V,
+        },
+        Step {
+            at_ns: ESTOP_RELEASED_NS,
+            volts: 0.0,
+        },
+    ]);
+    let Some((mut rig, mut host, enabled_at)) = booted_with_motion(
+        "emergency-stop",
+        Bench::default().component("ESTOP", pressed_and_released, "OUT", "EDGE.J13.2"),
+        None,
+        &[],
+    ) else {
+        return;
+    };
+    assert!(
+        enabled_at < ESTOP_PRESSED_NS,
+        "motion was enabled at {enabled_at} ns, after the stop's press at {ESTOP_PRESSED_NS}"
+    );
+
+    let mut at = enabled_at;
+    step_until(&mut rig, &mut at, ESTOP_PRESSED_NS + 100_000_000);
+    let (pressed, pressed_at) = read_state(&mut rig, &mut host, at);
+    let pressed_ena = level_of(rig.state(SC_ENA));
+    at = pressed_at;
+    step_until(&mut rig, &mut at, ESTOP_RELEASED_NS + 200_000_000);
+    let (released, released_at) = read_state(&mut rig, &mut host, at);
+    let released_ena = level_of(rig.state(SC_ENA));
+
+    let (acknowledged, acknowledged_at) = write(
+        &mut rig,
+        &mut host,
+        protocol::MSG_WRITE_MOTION_ENABLE,
+        &[0],
+        released_at,
+    );
+    let mut at = acknowledged_at;
+    step_until(&mut rig, &mut at, acknowledged_at + 20_000_000);
+    let (cleared, cleared_at) = read_state(&mut rig, &mut host, at);
+    let (enabled_again, again_at) = enable_motion(&mut rig, &mut host, cleared_at);
+    let _ = writeln!(
+        std::io::stderr(),
+        "pressed: {pressed:?}, SC_ENA {pressed_ena:?}; released: {released:?} at \
+         {released_at} ns, SC_ENA {released_ena:?}; motion off acknowledged: {acknowledged}; \
+         {cleared:?} at {cleared_at} ns; motion on acknowledged at {again_at} ns: \
+         {enabled_again}"
+    );
+    assert!(
+        enabled_again,
+        "the firmware refused motion at {again_at} ns, after {cleared:?}"
+    );
+    let _ = until_level(&mut rig, SC_ENA, Level::High, again_at);
+    rig.finish();
+
+    for (when, state, ena) in [
+        ("pressed", pressed, pressed_ena),
+        ("released", released, released_ena),
+    ] {
+        assert!(
+            state.faulted_reason == protocol::FaultedReason::EsdSwitch && !state.motion_enabled,
+            "the state with the stop {when}: {state:?}"
+        );
+        assert_eq!(ena, Some(Level::Low), "SC_ENA with the stop {when}");
+    }
+    assert!(
+        acknowledged,
+        "the firmware refused the request for motion off"
+    );
+    assert!(
+        cleared.faulted_reason == protocol::FaultedReason::None && !cleared.motion_enabled,
+        "the state after the acknowledgement: {cleared:?}"
+    );
+}
+
+// ============================================================
+// The machine's own scales
+// ============================================================
+
+/// The machine's encoder, a 600 pulse/rev encoder on the belt's idler: 2400
+/// counts a turn over the 40 mm a 20-tooth GT2 pulley carries the belt, 60
+/// counts a millimetre (`Hardware/Gantry`'s README).
+const BELT_COUNTS_PER_MM: i32 = 60;
+
+/// The drive's steps a millimetre in the case: a 200-step motor at 1/32
+/// microstepping on the same pulley, 160. The case's own figure, not one
+/// read off the machine: what matters here is that it differs from the
+/// encoder's, so the firmware pulses the drive by their ratio.
+const BELT_STEPS_PER_MM: i32 = 160;
+
+/// The firmware's parking deadband at 60 counts a millimetre: 1 µm is less
+/// than a count, so its two-count floor (`dev_servo.c`).
+const BELT_DEADBAND_COUNTS: i64 = 2;
+
+/// The jogs: 10 mm forward and 5 mm back at the jog test's 5 mm/s, each at
+/// rest within 5 s. At rest is one count held for 300 ms, not the fine
+/// encoder's 50 ms: a count is 17 µm here, so the first one of a move comes
+/// 75 ms to 100 ms after the jog is sent (measured), and the last one or two
+/// up to 125 ms apart as the loop closes on its target.
+const BELT_JOG_FORWARD_UM: i32 = 10_000;
+const BELT_JOG_BACK_UM: i32 = -5_000;
+const BELT_JOG_WAIT_NS: u64 = 5_000_000_000;
+const BELT_REST_NS: u64 = 300_000_000;
+
+#[test]
+fn the_firmware_jogs_the_carriage_on_the_belts_encoder() {
+    behaviour!(Test {
+        id: "mad-project.belt-encoder-jog",
+        covers: Some("SIL/mad.toml"),
+        given: "the machine's project file on a 60 counts/mm encoder and a 160 steps/mm \
+                drive, motion enabled; a host jogs 10 mm forward and 5 mm back at 5 mm/s",
+    });
+    expect!(
+        "jog-forward",
+        "the forward jog brings the encoder to rest within two counts of the 600 counts it \
+         commanded",
+        "the firmware's positioning, stall and integral figures are lengths and speeds \
+         converted at the profile's encoder scale, so they hold on an encoder 137 times \
+         coarser than the one they were tuned on"
+    );
+    expect!(
+        "jog-back",
+        "the jog back brings the encoder to rest within two counts of 300 counts short of \
+         where the first left it"
+    );
+    expect!(
+        "no-fault",
+        "a state read after both jogs reads motion still enabled and no fault",
+        "the stall guard judges the same 1 mm and 2 mm of following error here as on a fine \
+         encoder"
+    );
+    let Some((mut rig, mut host, enabled_at)) = booted_with_motion(
+        "belt-encoder",
+        Bench::default(),
+        Some(card_with_profile(profile(
+            BELT_COUNTS_PER_MM,
+            BELT_STEPS_PER_MM,
+            FAILSAFE_CAPACITY_MN,
+        ))),
+        &[
+            ("encoder_counts_per_mm", f64::from(BELT_COUNTS_PER_MM)),
+            ("drive_steps_per_mm", f64::from(BELT_STEPS_PER_MM)),
+        ],
+    ) else {
+        return;
+    };
+    let start = rig.encoder_count();
+    let mut legs = Vec::new();
+    let mut at = enabled_at;
+    for um in [BELT_JOG_FORWARD_UM, BELT_JOG_BACK_UM] {
+        let (rest, rest_at) = jog_resting(
+            &mut rig,
+            &mut host,
+            um,
+            JOG_SPEED_UM_S,
+            BELT_JOG_WAIT_NS,
+            BELT_REST_NS,
+            at,
+        );
+        at = rest_at;
+        legs.push(rest);
+    }
+    let (state, state_at) = read_state(&mut rig, &mut host, at);
+    let _ = writeln!(
+        std::io::stderr(),
+        "encoder {start} at the start, {legs:?} after the jogs; {state:?} at {state_at} ns; {}",
+        rig.summary("MACHINE")
+    );
+    rig.finish();
+
+    let per_mm = i64::from(BELT_COUNTS_PER_MM);
+    let forward_target = start + i64::from(BELT_JOG_FORWARD_UM) * per_mm / 1_000;
+    assert!(
+        (legs[0] - forward_target).abs() <= BELT_DEADBAND_COUNTS,
+        "the forward jog came to rest at {}, against {forward_target}",
+        legs[0]
+    );
+    let back_target = legs[0] + i64::from(BELT_JOG_BACK_UM) * per_mm / 1_000;
+    assert!(
+        (legs[1] - back_target).abs() <= BELT_DEADBAND_COUNTS,
+        "the jog back came to rest at {}, against {back_target}",
+        legs[1]
+    );
+    assert!(
+        state.motion_enabled && state.faulted_reason == protocol::FaultedReason::None,
+        "the state after the jogs: {state:?}"
+    );
 }

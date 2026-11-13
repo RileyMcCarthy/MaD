@@ -2059,103 +2059,6 @@ const scenarios = [
       } finally { await browser.close(); }
     },
   },
-  {
-    id: 'M13-home-endpoint',
-    name: 'M13 homing lands on its commanded position (live stream)',
-    async run() {
-      const { browser, page, errors } = await newSilPage();
-      try {
-        await connectToSil(page);
-        await page.goto(`${APP_URL}#/control`);
-        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
-        await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
-        await enableMotion(page);
-
-        const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
-        const before = await live();
-        assert(before, 'the live sample ring is exposed (dev build)');
-        await press(page.getByRole('button', { name: 'Home' }));
-
-        // Wait for the seek to actually START before waiting for it to finish.
-        // awaitRest on its own returns immediately: the axis is still at rest
-        // from before the click, which reads as "settled" and hands back the
-        // pre-home position — 87 mm from where homing ends.
-        const moveClock = await pageClock(page);
-        let moving = false;
-        while ((await moveClock.elapsed()) < DEVICE_WAIT_MS) {
-          const now = await live();
-          if (now && Math.abs(now.machinePosition - before.machinePosition) > 10) { moving = true; break; }
-          await waitPageTime(page, 100);
-        }
-        assert(moving, 'homing started moving the axis');
-        // Home's setpoint jumps to machine 0 immediately, so "position equals
-        // setpoint" is reached long before the gantry stops -- and an exit
-        // condition of "within X" makes any later assertion of "within X"
-        // vacuous, because the loop can only leave by satisfying it. Waiting
-        // for STILLNESS instead keeps the wait and the claim independent: the
-        // carriage has to stop moving, and only then is asked where it
-        // stopped. It also makes the reported number mean something. The old
-        // loop exited on the first sample inside 150 um and reported whatever
-        // that happened to be (64 um on CI) -- a fact about the poll interval,
-        // not about homing.
-        // Two stages, because neither alone is enough. Stillness on its own
-        // fires DURING homing: HOME_ENDSTOP calls actuator_stop() and dwells
-        // on a timer before backing off, so the carriage genuinely stops on
-        // the endstop with the setpoint still 87 mm away. And convergence on
-        // its own is what made the old check vacuous -- it exited on "within
-        // X" and then asserted "within X".
-        //
-        // So: wait for a LOOSE convergence to get past the endstop dwell,
-        // then wait for stillness, then assert a TIGHT bound. The wait
-        // threshold (0.5 mm) and the claim (~1.5 um) are 340x apart, so the
-        // assertion can fail without the wait having timed out.
-        const settleClock = await pageClock(page);
-        let after = null;
-        let converged = false;
-        let prevMm = NaN;
-        let stillTicks = 0;
-        while ((await settleClock.elapsed()) < RUN_WAIT_MS) {
-          after = await live();
-          if (after && Number.isFinite(after.machinePosition) && Number.isFinite(after.machineSetpoint)) {
-            if (!converged && Math.abs(after.machinePosition - after.machineSetpoint) < 0.5) {
-              converged = true;
-            }
-            if (converged) {
-              if (Number.isFinite(prevMm) && Math.abs(after.machinePosition - prevMm) <= 0.001) {
-                if (++stillTicks >= 4) break;
-              } else {
-                stillTicks = 0;
-              }
-              prevMm = after.machinePosition;
-            }
-          }
-          await waitPageTime(page, 100);
-        }
-        assert(after, 'the live stream reported a sample after homing');
-        assert(converged, 'homing brought the gantry onto its setpoint');
-        assert(stillTicks >= 4, 'the axis came to rest after homing');
-        // Homing ends with an ordinary profiled backoff move and app_motion
-        // only leaves HOME_BACKOFF on atTarget -- the servo's own "encoder
-        // settled on target", inside positionDeadband -- so on the ISS it
-        // lands exactly as a jog does: measured 0.98 um, against the same
-        // bound M13-jog-endpoint uses.
-        //
-        // The wait is for STILLNESS, not for the bound. That is what stops
-        // this being the tautology it was, where the loop exited on "within
-        // X" and then checked "within X" and could only fail by timing out.
-        const offUm = Math.abs(after.machinePosition - after.machineSetpoint) * 1000;
-        const homeTolUm = DEADBAND_UM * 1.5;
-        assert(
-          offUm <= homeTolUm,
-          `homing parked on its setpoint (off by ${offUm.toFixed(2)} um, tolerance ${homeTolUm.toFixed(2)} um` +
-            `, deadband ${DEADBAND_UM})`,
-        );
-        console.log(`    [manual] home: parked ${offUm.toFixed(2)} um from setpoint at ${(after.machinePosition * 1e6).toFixed(0)} nm`);
-
-        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
-      } finally { await browser.close(); }
-    },
-  },
 
   // M12 — every move type a motion PROFILE can author, checked in the data that
   // comes back. Note what is NOT here: G0 rapid and G28 homing go through
@@ -3974,6 +3877,111 @@ const scenarios = [
       } finally {
         await browser.close();
       }
+    },
+  },
+
+  // M13-home-endpoint runs LAST. Homing redefines the machine's position at
+  // the upper travel limit switch (25 mm there, 30 mm where it comes to
+  // rest), so afterwards machine 0 lies beyond that limit, where the firmware
+  // lets no move go. On a board the scenarios share (make e2e without
+  // BOARD_PER_SCENARIO=1), every scenario after it would fail in zeroLength,
+  // which jogs back to machine 0. CI and the nightly give each scenario a
+  // board of its own, where the order makes no difference.
+  {
+    id: 'M13-home-endpoint',
+    name: 'M13 homing lands on its commanded position (live stream)',
+    async run() {
+      const { browser, page, errors } = await newSilPage();
+      try {
+        await connectToSil(page);
+        await page.goto(`${APP_URL}#/control`);
+        await page.getByRole('button', { name: /Home/ }).waitFor({ timeout: DEVICE_WAIT_MS });
+        await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: DEVICE_WAIT_MS });
+        await enableMotion(page);
+
+        const live = () => page.evaluate(() => globalThis.__madLive?.latest() ?? null);
+        const before = await live();
+        assert(before, 'the live sample ring is exposed (dev build)');
+        await press(page.getByRole('button', { name: 'Home' }));
+
+        // Wait for the seek to actually START before waiting for it to finish.
+        // awaitRest on its own returns immediately: the axis is still at rest
+        // from before the click, which reads as "settled" and hands back the
+        // pre-home position — 30 mm from where homing ends.
+        const moveClock = await pageClock(page);
+        let moving = false;
+        while ((await moveClock.elapsed()) < DEVICE_WAIT_MS) {
+          const now = await live();
+          if (now && Math.abs(now.machinePosition - before.machinePosition) > 10) { moving = true; break; }
+          await waitPageTime(page, 100);
+        }
+        assert(moving, 'homing started moving the axis');
+        // Home's setpoint jumps to machine 0 immediately, so "position equals
+        // setpoint" is reached long before the gantry stops -- and an exit
+        // condition of "within X" makes any later assertion of "within X"
+        // vacuous, because the loop can only leave by satisfying it. Waiting
+        // for STILLNESS instead keeps the wait and the claim independent: the
+        // carriage has to stop moving, and only then is asked where it
+        // stopped. It also makes the reported number mean something. The old
+        // loop exited on the first sample inside 150 um and reported whatever
+        // that happened to be (64 um on CI) -- a fact about the poll interval,
+        // not about homing.
+        // Two stages, because neither alone is enough. Stillness on its own
+        // fires DURING homing: HOME_ENDSTOP calls actuator_stop() and dwells
+        // on a timer before backing off, so the carriage genuinely stops on
+        // the endstop with the setpoint still 90 mm away. And convergence on
+        // its own is what made the old check vacuous -- it exited on "within
+        // X" and then asserted "within X".
+        //
+        // So: wait for a LOOSE convergence to get past the endstop dwell,
+        // then wait for stillness, then assert a TIGHT bound. The wait
+        // threshold (0.5 mm) and the claim (~1.5 um) are 340x apart, so the
+        // assertion can fail without the wait having timed out.
+        const settleClock = await pageClock(page);
+        let after = null;
+        let converged = false;
+        let prevMm = NaN;
+        let stillTicks = 0;
+        while ((await settleClock.elapsed()) < RUN_WAIT_MS) {
+          after = await live();
+          if (after && Number.isFinite(after.machinePosition) && Number.isFinite(after.machineSetpoint)) {
+            if (!converged && Math.abs(after.machinePosition - after.machineSetpoint) < 0.5) {
+              converged = true;
+            }
+            if (converged) {
+              if (Number.isFinite(prevMm) && Math.abs(after.machinePosition - prevMm) <= 0.001) {
+                if (++stillTicks >= 4) break;
+              } else {
+                stillTicks = 0;
+              }
+              prevMm = after.machinePosition;
+            }
+          }
+          await waitPageTime(page, 100);
+        }
+        assert(after, 'the live stream reported a sample after homing');
+        assert(converged, 'homing brought the gantry onto its setpoint');
+        assert(stillTicks >= 4, 'the axis came to rest after homing');
+        // Homing ends with an ordinary profiled backoff move and app_motion
+        // only leaves HOME_BACKOFF on atTarget -- the servo's own "encoder
+        // settled on target", inside positionDeadband -- so on the ISS it
+        // lands exactly as a jog does: measured 0.98 um, against the same
+        // bound M13-jog-endpoint uses.
+        //
+        // The wait is for STILLNESS, not for the bound. That is what stops
+        // this being the tautology it was, where the loop exited on "within
+        // X" and then checked "within X" and could only fail by timing out.
+        const offUm = Math.abs(after.machinePosition - after.machineSetpoint) * 1000;
+        const homeTolUm = DEADBAND_UM * 1.5;
+        assert(
+          offUm <= homeTolUm,
+          `homing parked on its setpoint (off by ${offUm.toFixed(2)} um, tolerance ${homeTolUm.toFixed(2)} um` +
+            `, deadband ${DEADBAND_UM})`,
+        );
+        console.log(`    [manual] home: parked ${offUm.toFixed(2)} um from setpoint at ${(after.machinePosition * 1e6).toFixed(0)} nm`);
+
+        assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
+      } finally { await browser.close(); }
     },
   },
 ];

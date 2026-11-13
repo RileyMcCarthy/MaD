@@ -21,11 +21,35 @@
 #define DEV_SERVO_STALL_BAND_UM 1000
 #define DEV_SERVO_STALL_TRAVEL_UM 1000
 
+/* The rest of the tuning that is a physical quantity, each as one: a speed, an
+ * acceleration. dev_servo_init converts them with the profile's
+ * encoderStepsPerMM too, so they are the same on the machine's 60 counts/mm
+ * belt encoder as on an 8192 counts/mm one. Left in counts they were sized for
+ * 8192: at 60 counts/mm the integral's backstop stood at 1365 mm/s, which
+ * limits nothing, and the fallback speed for a profile with no maxVelocity at
+ * 410 mm/s, which is not gentle.
+ *
+ *  - the integral term's authority: 10 mm/s
+ *  - the motion envelope when the profile gives none: 3 mm/s and 30 mm/s^2
+ *  - the acceleration below which the trajectory counts as steady, for the
+ *    integral's gate: 0.122 mm/s^2, which is one count/s per 1 ms tick at
+ *    8192 counts/mm, the figure this was tuned as. Float rounding at cruise
+ *    scales with the counts too, so it stays below this on any encoder. */
+#define DEV_SERVO_INTEGRAL_LIMIT_UM_S 10000
+#define DEV_SERVO_FALLBACK_VELOCITY_UM_S 3000
+#define DEV_SERVO_FALLBACK_ACCEL_UM_S2 30000
+#define DEV_SERVO_STEADY_ACCEL_NM_S2 122070
+/* The same acceleration in counts/s^2 at 8192 counts/mm: what an
+ * unprovisioned profile keeps. */
+#define DEV_SERVO_STEADY_ACCEL_DEFAULT 1000.0f
+
 /* Compile-time DEFAULTS in encoder counts (servo = 8192 counts/mm). Wiring
  * (pulse/dir/encoder channels) and control tuning (gains, stall guard, loop
  * period) are fixed here; maxVelocity/maxAccel are OVERRIDDEN per channel at
  * init from the machine profile (dev_servo_init) and fall back to these gentle
- * values only if the profile is unprovisioned. Tune the gains against the SIL
+ * values only if the profile gives none. The counts below are what the lengths
+ * and speeds above come to at 8192 counts/mm; a profile with an encoder scale
+ * replaces every one of them at init. Tune the gains against the SIL
  * plant model — see dev_servo.h.
  * Positional initializer (no .field = designators): FlexC rejects C99 designated
  * initializers ("Bad constant expression"). Field order MUST match
@@ -37,8 +61,10 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
         HAL_GPIO_SERVO_ENA,          /* gpioEnable */
         HAL_ENCODER_CHANNEL_SERVO,   /* encoderChannel */
         1000U,                       /* loopPeriodUs     — 1 kHz control tick (match the cog rate) */
-        24576,                       /* maxVelocity      — gentle fallback (3 mm/s); machine profile normally overrides (20 mm/s => 163840) */
-        245760,                      /* maxAccel         — gentle fallback (30 mm/s^2); machine profile normally overrides (50 mm/s^2 => 409600) */
+        24576,                       /* maxVelocity      — gentle fallback, 3 mm/s at 8192 counts/mm
+                                      *   (DEV_SERVO_FALLBACK_VELOCITY_UM_S); the machine profile normally overrides */
+        245760,                      /* maxAccel         — gentle fallback, 30 mm/s^2 at 8192 counts/mm
+                                      *   (DEV_SERVO_FALLBACK_ACCEL_UM_S2); the machine profile normally overrides */
         8,                           /* positionDeadband — fallback only; dev_servo_init
                                       *   sets it to DEV_SERVO_DEADBAND_NM of the
                                       *   profile's encoder scale (8 at 8192 counts/mm) */
@@ -47,8 +73,9 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
         0,                           /* kiNum            — integral OFF: unloaded motion needs none;
                                       *                    Ki nulls a steady error under load */
         1,                           /* kiDen */
-        81920,                       /* integralLimit    — 10 mm/s of integral authority (a backstop;
-                                      *   the integral is gated, see dev_servo_private_integrate) */
+        81920,                       /* integralLimit    — 10 mm/s of integral authority at 8192 counts/mm
+                                      *   (DEV_SERVO_INTEGRAL_LIMIT_UM_S; a backstop: the integral is
+                                      *   gated, see dev_servo_private_integrate) */
         /* Stall guard (dev_servo.h). On the SIL twin's drive (20 ms lag,
          * shipped 50 mm/s and 600 mm/s^2 profile) a healthy carriage shows at
          * most 0.86 mm of following error on moves and waveforms, 1.07 mm on
@@ -84,9 +111,6 @@ static const dev_servo_channelConfig_S dev_servo_channelConfigDefault[DEV_SERVO_
  * leave under 5% of a ramp's transient following error, so what is left to
  * integrate is a steady error. */
 #define DEV_SERVO_INTEGRAL_SETTLE_TAUS 3.0f
-/* A setpoint velocity change smaller than this per tick (counts/s) is a
- * steady trajectory, not an acceleration: float rounding at cruise. */
-#define DEV_SERVO_STEADY_DV 1.0f
 
 /* Active per-channel config: seeded from the defaults above at init, then
  * maxVelocity/maxAccel are overlaid from the machine profile. All runtime reads
@@ -183,6 +207,10 @@ typedef struct
     float commandedVel; /* counts/s actually applied (for telemetry) */
     uint32_t lastTickUs; /* HAL_time_getUs() at the previous tick (for measured dt) */
     float countsPerPulse;   /* encoder counts one step pulse moves the carriage */
+    /* counts/s^2: a setpoint velocity changing slower than this is a steady
+     * trajectory, not an acceleration -- float rounding at cruise
+     * (DEV_SERVO_STEADY_ACCEL_NM_S2 at the profile's encoder scale). */
+    float steadyAccel;
     /* Stall guard (see the notes in dev_servo.h). */
     uint32_t stallBandCount; /* consecutive ticks with |error| over stallBand */
     uint32_t emittedLast;    /* pulse engine's running total at the last read */
@@ -587,6 +615,20 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
          * machine-profile limits (already in encoder counts). A non-positive limit
          * means the profile is unprovisioned => keep the gentle default. */
         dev_servo_channelConfig[ch] = dev_servo_channelConfigDefault[ch];
+        float steadyAccel = DEV_SERVO_STEADY_ACCEL_DEFAULT;
+        if (encoderStepsPerMM > 0)
+        {
+            /* The speeds and accelerations, at this encoder's scale. The
+             * fallback envelope first: the profile's own limits, below,
+             * replace it when it has them. */
+            dev_servo_channelConfig[ch].maxVelocity =
+                dev_servo_private_countsFromUm(DEV_SERVO_FALLBACK_VELOCITY_UM_S, encoderStepsPerMM);
+            dev_servo_channelConfig[ch].maxAccel =
+                dev_servo_private_countsFromUm(DEV_SERVO_FALLBACK_ACCEL_UM_S2, encoderStepsPerMM);
+            dev_servo_channelConfig[ch].integralLimit =
+                dev_servo_private_countsFromUm(DEV_SERVO_INTEGRAL_LIMIT_UM_S, encoderStepsPerMM);
+            steadyAccel = ((float)DEV_SERVO_STEADY_ACCEL_NM_S2 * (float)encoderStepsPerMM) / 1000000.0f;
+        }
         if (maxVelocityCounts > 0) { dev_servo_channelConfig[ch].maxVelocity = maxVelocityCounts; }
         if (maxAccelCounts > 0) { dev_servo_channelConfig[ch].maxAccel = maxAccelCounts; }
         if (encoderStepsPerMM > 0)
@@ -623,6 +665,7 @@ void dev_servo_init(int lock, int32_t maxVelocityCounts, int32_t maxAccelCounts,
         d->velActive = false;
         d->lastCw = true;
         d->countsPerPulse = countsPerPulse;
+        d->steadyAccel = steadyAccel;
         dev_servo_private_resync(ch, pos);
         /* The drive starts disabled, but the enable output is NOT written here:
          * init runs on the MAIN cog, and only the MOTOR cog may drive the pin
@@ -1256,7 +1299,7 @@ void dev_servo_run(void)
         const float error = d->setpointPos - (float)pos;
         const float kp = (float)cfg->kpNum / (float)cfg->kpDen;
 
-        const bool steady = (fabsf(d->setpointVel - spVelBefore) <= DEV_SERVO_STEADY_DV);
+        const bool steady = (fabsf(d->setpointVel - spVelBefore) <= (d->steadyAccel * dt));
         /* Open loop learns nothing: the feedback is off, so its error is the
          * pulses and the encoder disagreeing, not a load to hold against. The
          * steady clock restarts too, so closed loop settles before it learns. */

@@ -15,7 +15,7 @@
 //! | `DRIVE` | embsim's `StepperMotor`: `drive_steps_per_mm` ([`STEPS_PER_MM`] by default), `DIR` low forward, enable active high (energized = enabled, the DMM DYN4 default; the profile's `servoEnableActiveLow` must match), no load loss | `STEP`, `DIR`, `ENA`, read against `DRIVE_GND` |
 //! | `READY` | the drive's ready output, held at the level the firmware reads as not ready (below) | `SRDY`, against `DRIVE_GND` |
 //! | `ENCODER` | embsim's `QuadratureEncoder`, `encoder_counts_per_mm` ([`STEPS_PER_MM`] by default), its output stage the `encoder_output` option | `ENC_A+`, `ENC_A-`, `ENC_B+`, `ENC_B-` (`rs422`) or `ENC_A+`, `ENC_B+` (`push-pull`, `npn-open-collector`), with `ENC_GND` their declared return (below) |
-//! | `UPPER`, `LOWER` | embsim's `EndSwitch`, each a normally closed contact that opens past [`TRAVEL_MM`] and below 0 mm | `UPPER_COM`, `UPPER+`; `LOWER_COM`, `LOWER+` |
+//! | `UPPER`, `LOWER` | embsim's `EndSwitch`, each a normally closed contact: the upper opens below [`UPPER_MM`], the lower past [`TRAVEL_MM`] (below, "The travel limits") | `UPPER_COM`, `UPPER+`; `LOWER_COM`, `LOWER+` |
 //! | `DOOR`, `ESD_U`, `ESD_L`, `ESD_A` | `EndSwitch` contacts no carriage moves: the door's closed, the emergency stops' open | `DOOR_COM`, `DOOR+`, … `ESD_A_COM`, `ESD_A+` |
 //! | `LOAD_CELL` | MaD's load cell: the bridge's outputs behind 350 Ω, centred on the excitation it senses and scaled to it, released while either excitation pin reads nothing | `E+`, `E-` sensed, `S+`, `S-` driven |
 //!
@@ -33,6 +33,25 @@
 //! | `drive_steps_per_mm` | the drive's steps a millimetre of carriage travel, above zero: [`STEPS_PER_MM`] by default. The firmware's machine profile must say the same (`servoStepsPerMM`) |
 //! | `encoder_counts_per_mm` | the encoder's counts a millimetre, above zero: [`STEPS_PER_MM`] by default (`encoderStepsPerMM`). The two differ on a machine whose drive is geared or microstepped apart from its encoder, and the firmware pulses the drive by their ratio |
 //! | `hard_stop_mm` | a carriage position the carriage cannot pass, in millimetres, finite and off the carriage's start at [`START_MM`]: none by default (below, "The hard stop") |
+//!
+//! # The travel limits
+//!
+//! Position is the distance between the jaws, as the firmware counts it: it
+//! falls as the carriage rises toward the fixed upper jaw and grows as it
+//! descends. So the **upper** end switch is at the LOW end of the position
+//! axis, where the jaws meet, and the **lower** one at the high end, as on
+//! the machine (`Hardware/Gantry`'s README: the upper grip hangs from the
+//! load cell at the top of the column, the carriage carries the lower grip)
+//! and in the firmware, whose homing seeks the upper switch by driving
+//! position DOWN (`app_motion.c`, `app_motion_private_homing_run`) and whose
+//! travel limits stop a move toward the upper switch when it falls and
+//! toward the lower one when it grows. The upper switch opens [`UPPER_MM`]
+//! above the carriage's start, the lower one at [`TRAVEL_MM`].
+//!
+//! Until MaD's firmware enforced those limits this kind had the two the
+//! other way round, the upper switch at the high end: homing then drove
+//! away from the switch it was looking for, ran its whole travel, and ended
+//! without a reference.
 //!
 //! # The hard stop
 //!
@@ -206,14 +225,17 @@ impl Carriage {
     }
 }
 
-/// Where the upper end switch opens: 100 mm, the firmware's failsafe
-/// `maxPosition` (`Firmware/MaDCore/src/DEV/Config/dev_nvram_config.c`),
-/// `TRAVEL_MM` in `iss_description.rs`.
+/// Where the lower end switch opens, the high end of the travel: 100 mm, the
+/// firmware's failsafe `maxPosition`
+/// (`Firmware/MaDCore/src/DEV/Config/dev_nvram_config.c`), `TRAVEL_MM` in
+/// `iss_description.rs` (module docs, "The travel limits").
 pub const TRAVEL_MM: f64 = 100.0;
 
-/// Where the lower end switch opens: the carriage's start, 0 mm (the lower
-/// switch of `BenchMachine::build`).
-pub const LOWER_MM: f64 = 0.0;
+/// Where the upper end switch opens, the low end of the travel: 10 mm
+/// above the carriage's start, where `run_iss`'s gantry had its upper
+/// threshold (`upper_threshold_mm: -10.0`), so the firmware's homing finds
+/// it 10 mm into its seek and a jog has 10 mm of room that way.
+pub const UPPER_MM: f64 = -10.0;
 
 /// Where the carriage starts, 0 mm: the drive's shaft's first position, from
 /// which its travel is counted. A hard stop is on one side of it.
@@ -423,14 +445,15 @@ fn assemble(
         quadrature_encoder::Config::new(scales.encoder_counts_per_mm).with_output(output),
     )?;
     // Normally closed: each closes on the carriage's side of its point and
-    // opens past it.
+    // opens past it. The upper switch is at the low end of the position
+    // axis, the lower at the high end (module docs, "The travel limits").
     let upper = EndSwitch::new(end_switch::Config::new(
-        TRAVEL_MM,
-        ActuationSense::Decreasing,
+        UPPER_MM,
+        ActuationSense::Increasing,
     ))?;
     let lower = EndSwitch::new(end_switch::Config::new(
-        LOWER_MM,
-        ActuationSense::Increasing,
+        TRAVEL_MM,
+        ActuationSense::Decreasing,
     ))?;
     let held = || {
         EndSwitch::new(end_switch::Config::new(

@@ -48,12 +48,18 @@ turns a jog down, a toast says so:
 
 | Button | Action |
 |---|---|
-| **Home** | Homes the axis to its reference |
+| **Home** | Homes the axis to its reference: the upper end stop |
 | **Zero force** | Makes the current load the origin of **Sample Force** |
 | **Zero length** | Makes the current position the origin of **Sample Position** (the gauge length) |
 
 Zeroing defines the **sample** coordinates a test records. **Machine Force**
 and **Machine Position** stay absolute.
+
+Homing drives the carriage toward the upper end stop and defines the position
+where the switch goes active. If the switch is already active, the carriage
+first moves off it and then approaches again. If the switch does not release,
+or is never found, homing fails with an error and the position is left as it
+was.
 
 ## During a test
 
