@@ -110,11 +110,6 @@ const THREAD: LogThread =
     ? 'worker'
     : 'main';
 
-/** Which thread this module instance is running on. */
-export function logThread(): LogThread {
-  return THREAD;
-}
-
 /* ------------------------------------------------------------ ring buffer -- */
 
 /** Retained entries. ~5k covers a long session of non-per-sample logging. */

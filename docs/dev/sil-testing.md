@@ -297,15 +297,15 @@ firmware-flash `FW*` ones, a host Chrome against in-page fakes).
 ## A browser on the host's clock is not a SIL configuration
 
 !!! warning "The ISS behind a PTY or the WS bridge measures the host"
-    The browser cannot open a PTY. The WS↔PTY bridge (`npm run sil:bridge`)
-    relays one to a faked Web Serial port, and it defaults to `/tmp/tty.rpi`:
-    the native firmware library's path, which no target serves any more.
-    `make playground-pty` is on `/tmp/tty.iss` so that pairing the bridge with
-    the ISS takes a deliberate act (the bridge's `MAD_PTY`). That pairing hands
+    The browser cannot open a PTY. A WS↔PTY bridge relays one to a faked Web
+    Serial port; the one this repo carried defaulted to `/tmp/tty.rpi`, the
+    native firmware library's path, which no target serves any more, and has
+    been removed. `make playground-pty` is on `/tmp/tty.iss`, and nothing in
+    the repo puts a browser behind it. Pairing the ISS with such a bridge hands
     the board's bytes to a browser running at host speed, and the ISS
     interprets far slower than real time, so every wait the app makes measures
-    the host rather than the machine. The bridge remains for real hardware
-    (`tools/hw-ws-bridge.mjs`, `e2e/hw-read-save-config.mjs`), which runs in
+    the host rather than the machine. A WebSocket-to-serial bridge remains for
+    real hardware (`tools/hw-ws-bridge.mjs`, `e2e/hw-read-save-config.mjs`), which runs in
     real time.
 
 `mad-catalog` has a Chrome-free PTY round trip (`tests/pty_protocol.rs`):

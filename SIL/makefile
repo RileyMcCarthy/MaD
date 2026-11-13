@@ -116,8 +116,9 @@ playground-iss: playground
 # 2 000 000 baud on the control port J4, for a serial console or a program that speaks it. The
 # board runs unpaced, at whatever rate the ISS manages. No browser belongs
 # behind it (see the top of this file). The path is DELIBERATELY NOT
-# /tmp/tty.rpi, which Software/Control/tools/sil-ws-bridge.mjs opens by
-# default: the ISS behind that bridge is the pairing that measures the host.
+# /tmp/tty.rpi, the retired native firmware library's path that the old
+# WS-to-PTY bridge opened by default: the ISS behind a bridge to a host-speed
+# browser is the pairing that measures the host.
 playground-pty: flash-image sd-image
 	$(EMBSIM) run mad.toml --pty /tmp/tty.iss
 

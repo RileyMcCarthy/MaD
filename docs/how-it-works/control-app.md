@@ -67,8 +67,8 @@ The app is a **monitor/controller, not a safety device** (see the
 - **Deferred PWA updates** — a new version is applied only when idle and
   disconnected, never mid-test.
 
-For the full hardening write-up see
-[HARDENING.md](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/docs/HARDENING.md).
+The app's own summary is the
+[README's reliability section](https://github.com/RileyMcCarthy/MaD/blob/main/Software/Control/README.md#reliability-features).
 
 ## Performance
 
