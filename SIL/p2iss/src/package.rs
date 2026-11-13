@@ -501,8 +501,8 @@ impl CorePads {
             let bits = self.banks.volts(bank).map_or(NO_SUPPLY, f64::to_bits);
             if bits != self.bank_bits[bank] {
                 self.bank_bits[bank] = bits;
-                for pin in bank * PADS_PER_BANK..(bank + 1) * PADS_PER_BANK {
-                    self.keys[pin] = None;
+                for key in &mut self.keys[bank * PADS_PER_BANK..(bank + 1) * PADS_PER_BANK] {
+                    *key = None;
                 }
                 moved = true;
             }
