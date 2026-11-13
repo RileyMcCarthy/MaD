@@ -59,6 +59,7 @@ export interface TestRunIndexRow {
   status: TestRunEntry['status'];
   sampleProfileName?: string;
   motionProfileName?: string;
+  errorMessage?: string;
 }
 
 function sanitizeName(name: string): string {
@@ -435,6 +436,7 @@ function indexRow(entry: TestRunEntry): TestRunIndexRow {
     status: entry.status,
     sampleProfileName: entry.sampleProfile?.serial || undefined,
     motionProfileName: entry.motionProfile?.name || undefined,
+    errorMessage: entry.errorMessage,
   };
 }
 

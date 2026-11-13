@@ -62,7 +62,8 @@ look identical.
 
 - If two granted ports have the remembered adapter's USB id, the app does not
   guess between them: pick the control port yourself.
-- Reconnecting does not restart the machine. To restart it, power-cycle it.
+- To restart the machine, power-cycle it, or use **Reboot now** after writing
+  the [machine configuration](machine-configuration.md).
 
 !!! note "Connected vs. Responding"
     **Connected** means the serial port is open. **Responding** means the

@@ -46,8 +46,8 @@ The check judges the steps/mm you have **typed**. If those differ from the ones
 saved on the machine, **Run motion calibration** stays locked and the panel
 asks you to write them, restart the machine, and run the check again.
 
-To restart the machine, power-cycle it: reconnecting the app does not restart
-it.
+Writing the configuration offers **Reboot now**, which restarts the machine.
+You can also power-cycle it.
 
 While a routine runs, its button shows the step it is on and the other
 routine is locked:

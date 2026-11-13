@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   SampleProfileEntry,
   MotionProfileEntry,
@@ -7,13 +7,15 @@ import {
   generateTestGcode,
   parseSampleProfileJson,
   sampleProfileNameFromFile,
+  RestrictedReason,
 } from '@/domain';
+import { checkTestLimits } from '@/domain/testLimits';
+import { legacyProfileProblem } from '@/domain/legacyProfile';
 import { dataStore } from '@/storage/DataStore';
 import { deviceClient } from '@/device/session';
 import { useStore } from '@/store/useStore';
 import Modal from './Modal';
 import GcodePreview from './GcodePreview';
-import { markRunCompleted } from './markRunCompleted';
 import { startTestOnDevice } from './startTestOnDevice';
 
 interface TestRunnerProps {
@@ -33,6 +35,13 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
   const testRunning = useStore((s) => Boolean(s.machineState?.testRunning));
   const folderReady = useStore((s) => s.dataFolderReady);
   const setSampleProfile = useStore((s) => s.setSampleProfile);
+  const finishedRun = useStore((s) => s.finishedRun);
+  const trackRun = useStore((s) => s.trackRun);
+  const confirmRunStarted = useStore((s) => s.confirmRunStarted);
+  const dropRun = useStore((s) => s.dropRun);
+  const machineConfig = useStore((s) => s.config);
+  const latestSample = useStore((s) => s.latestSample);
+  const restricted = useStore((s) => (s.machineState?.restrictedReason ?? RestrictedReason.NONE) !== RestrictedReason.NONE);
 
   const [samples, setSamples] = useState<SampleProfileEntry[]>([]);
   const [motions, setMotions] = useState<MotionProfileEntry[]>([]);
@@ -41,11 +50,11 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
+  /** The run this runner started and is waiting on (for its messages). The
+   *  store decides when it has finished, on whichever screen is open. */
   const activeTestName = useRef<string | null>(null);
-  /** Set once we've actually seen the firmware report the test running, so the
-   *  run→idle transition (completion) isn't confused with not-yet-started. */
-  const sawRunning = useRef(false);
   const watchdog = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearWatchdog = () => {
@@ -66,6 +75,8 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
 
   const selectedSample = samples.find((s) => s.id === sampleId)?.profile;
   const selectedMotion = motions.find((m) => m.id === motionId)?.profile;
+  // An old-format profile would run as something else; it is refused, with why.
+  const legacyMotion = selectedMotion ? legacyProfileProblem(selectedMotion) : null;
 
   // Reflect the chosen sample as the active profile so the live charts show its
   // force/displacement (and stress/strain) limit lines as soon as it's selected.
@@ -73,25 +84,15 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
     if (selectedSample) setSampleProfile(selectedSample);
   }, [sampleId, selectedSample, setSampleProfile]);
 
-  // Mark the run completed once firmware finishes: we must have observed the
-  // test actually running (testRunning true) and then go idle. Tracking "saw
-  // running" rather than a single true→false edge makes this robust to ordering
-  // (the run is registered before runTest() resolves, so a short test that
-  // finishes early is still caught). Only while connected — on disconnect
-  // machineState resets, which would read as a (false) completion; we keep the
-  // run 'running' and let a reconnect resolve it.
+  // The store marks the run completed when the machine finishes it
+  // (src/domain/runTracking.ts); this only reports it.
   useEffect(() => {
-    if (!connected || !activeTestName.current) return;
-    if (testRunning) {
-      sawRunning.current = true;
-    } else if (sawRunning.current) {
-      const name = activeTestName.current;
-      activeTestName.current = null;
-      sawRunning.current = false;
-      clearWatchdog();
-      void markRunCompleted(dataStore, name, useStore.getState().notify).then(onChanged);
-    }
-  }, [testRunning, connected, onChanged]);
+    if (finishedRun === null || finishedRun !== activeTestName.current) return;
+    activeTestName.current = null;
+    clearWatchdog();
+    setMessage(`Test ${finishedRun} finished. Download its data from Test runs.`);
+    onChanged();
+  }, [finishedRun, onChanged]);
 
   // Losing the UI link mid-test is a non-event: the machine runs the program
   // autonomously from its SD card (and is protected by its own hardware e-stop +
@@ -134,6 +135,11 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
     if (!file || !dataStore.connected) return;
     try {
       const profile = JSON.parse(await file.text());
+      const legacy = legacyProfileProblem(profile);
+      if (legacy) {
+        setMessage(`Motion profile not imported: ${legacy}`);
+        return;
+      }
       const entry: MotionProfileEntry = {
         id: crypto.randomUUID(),
         name: profile.name || file.name.replace(/\.mp$/i, '') || 'imported',
@@ -150,7 +156,7 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
   };
 
   const run = async () => {
-    if (!selectedSample || !selectedMotion) return;
+    if (!selectedSample || !selectedMotion || legacyMotion) return;
     if (!dataStore.connected) {
       setMessage('Choose a data folder in Settings first.');
       return;
@@ -198,7 +204,7 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
       // test can finish before runTest() resolves, which previously left the run
       // stuck 'running' (machine idle but history still "running").
       activeTestName.current = testName;
-      sawRunning.current = false;
+      trackRun(testName);
 
       // Enable motion, push the sample profile, then upload + start the test.
       // A refused sample profile write fails the start before runTest(), so a
@@ -213,10 +219,11 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
       if (!started.ok) {
         // startTestOnDevice already marked the run 'error'.
         activeTestName.current = null;
-        sawRunning.current = false;
+        dropRun(testName);
         clearWatchdog();
         setMessage(started.error);
       } else {
+        confirmRunStarted(testName, gcode);
         setMessage(`Test ${testName} started.`);
         // Stuck-run watchdog: if firmware never reports completion well past
         // the profile's expected duration, tell the user instead of waiting
@@ -239,7 +246,7 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
       const name = activeTestName.current;
       if (name) {
         activeTestName.current = null;
-        sawRunning.current = false;
+        dropRun(name);
         clearWatchdog();
         void dataStore.updateTestRun(name, { status: 'error' }).then(onChanged);
       }
@@ -250,11 +257,42 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
   };
 
   const previewProfile: TestProfile | null =
-    selectedSample && selectedMotion
+    selectedSample && selectedMotion && !legacyMotion
       ? { ...selectedMotion, sampleProfile: selectedSample }
       : null;
 
-  const runDisabled = !connected || busy || testRunning || !selectedSample || !selectedMotion;
+  const runDisabled = !connected || busy || testRunning || !selectedSample || !selectedMotion || legacyMotion !== null;
+
+  // Where the test asks for more than the machine or the sample allows. Checked
+  // against the machine's live configuration and state, so it updates as they do.
+  const machineMm = latestSample?.['Machine Position (mm)'];
+  const extensionMm = latestSample?.['Sample Position (mm)'];
+  const gaugeLengthMm =
+    machineMm !== undefined && extensionMm !== undefined && Number.isFinite(machineMm - extensionMm)
+      ? machineMm - extensionMm
+      : null;
+  const roundedGauge = gaugeLengthMm === null ? null : Math.round(gaugeLengthMm * 10) / 10;
+  const roundedExtension = Math.round((extensionMm ?? 0) * 10) / 10;
+  const restrictedVelocity = restricted ? (machineConfig?.['Restricted Velocity (mm/s)'] ?? null) : null;
+  const limitIssues = useMemo(
+    () =>
+      previewProfile
+        ? checkTestLimits(previewProfile, {
+            machine: machineConfig,
+            startExtensionMm: roundedExtension,
+            gaugeLengthMm: roundedGauge,
+            restrictedVelocityMmS: restrictedVelocity,
+          })
+        : [],
+    // previewProfile is rebuilt every render; its parts are the real inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedSample, selectedMotion, machineConfig, roundedExtension, roundedGauge, restrictedVelocity],
+  );
+
+  const onRunClick = () => {
+    if (limitIssues.length > 0) setConfirmOpen(true);
+    else void run();
+  };
 
   return (
     <div className="panel">
@@ -302,10 +340,31 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
         </div>
       </div>
 
+      {legacyMotion && (
+        <div className="limit-warnings" data-testid="legacy-profile">
+          <div className="limit-warnings-title">This motion profile can't be run</div>
+          <p>{legacyMotion}</p>
+        </div>
+      )}
+
+      {!legacyMotion && limitIssues.length > 0 && (
+        <div className="limit-warnings" data-testid="limit-warnings">
+          <div className="limit-warnings-title">This test goes beyond the machine or sample limits</div>
+          <ul>
+            {limitIssues.map((issue) => (
+              <li key={issue.id} data-issue={issue.id}>
+                <span className="limit-source">{issue.source === 'machine' ? 'Machine' : 'Sample'}</span>
+                {issue.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="row" style={{ marginTop: 12 }}>
         <button
           className="primary"
-          onClick={run}
+          onClick={onRunClick}
           disabled={runDisabled}
           data-testid="run-test"
         >
@@ -317,6 +376,27 @@ export default function TestRunner({ onChanged }: TestRunnerProps) {
         {!connected && <span className="muted">Connect a device to run.</span>}
         {message && <span className="muted">{message}</span>}
       </div>
+
+      <Modal open={confirmOpen} title="Run past the limits?" onClose={() => setConfirmOpen(false)} width={520}>
+        <ul className="limit-confirm-list">
+          {limitIssues.map((issue) => (
+            <li key={issue.id}>{issue.message}</li>
+          ))}
+        </ul>
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button onClick={() => setConfirmOpen(false)}>Cancel</button>
+          <button
+            className="primary"
+            data-testid="run-anyway"
+            onClick={() => {
+              setConfirmOpen(false);
+              void run();
+            }}
+          >
+            Run anyway
+          </button>
+        </div>
+      </Modal>
 
       <Modal open={previewOpen} title="Generated G-code & Motion" onClose={() => setPreviewOpen(false)}>
         {previewProfile && <GcodePreview profile={previewProfile} />}

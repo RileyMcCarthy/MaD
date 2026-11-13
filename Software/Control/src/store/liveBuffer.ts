@@ -25,6 +25,8 @@ export interface LiveSeries {
   machinePosition: Float64Array;
   machineSetpoint: Float64Array;
   machineCommanded: Float64Array;
+  /** Ideal path position (domain/expectedPath.ts); NaN where there is none. */
+  machineExpected: Float64Array;
   sampleForce: Float64Array;
   samplePosition: Float64Array;
   /** Number of valid points (≤ CAPACITY). */
@@ -43,6 +45,7 @@ const RING = {
   machinePosition: new Float64Array(CAPACITY),
   machineSetpoint: new Float64Array(CAPACITY),
   machineCommanded: new Float64Array(CAPACITY),
+  machineExpected: new Float64Array(CAPACITY),
   sampleForce: new Float64Array(CAPACITY),
   samplePosition: new Float64Array(CAPACITY),
 };
@@ -53,6 +56,7 @@ const OUT = {
   machinePosition: new Float64Array(CAPACITY),
   machineSetpoint: new Float64Array(CAPACITY),
   machineCommanded: new Float64Array(CAPACITY),
+  machineExpected: new Float64Array(CAPACITY),
   sampleForce: new Float64Array(CAPACITY),
   samplePosition: new Float64Array(CAPACITY),
 };
@@ -63,6 +67,7 @@ const FIELDS: Array<keyof typeof RING> = [
   'machinePosition',
   'machineSetpoint',
   'machineCommanded',
+  'machineExpected',
   'sampleForce',
   'samplePosition',
 ];
@@ -71,19 +76,22 @@ function writeAt(
   idx: number,
   t: number,
   s: SampleData,
+  expected = Number.NaN,
 ): void {
   RING.t[idx] = t;
   RING.machineForce[idx] = s['Machine Force (N)'];
   RING.machinePosition[idx] = s['Machine Position (mm)'];
   RING.machineSetpoint[idx] = s['Machine Setpoint (mm)'];
   RING.machineCommanded[idx] = s['Machine Commanded (mm)'] ?? s['Machine Setpoint (mm)'];
+  RING.machineExpected[idx] = expected;
   RING.sampleForce[idx] = s['Sample Force (N)'];
   RING.samplePosition[idx] = s['Sample Position (mm)'];
 }
 
-export function pushSample(s: SampleData): void {
+/** Append a sample. `expectedAt` gives the ideal path position for its time, if any. */
+export function pushSample(s: SampleData, expectedAt?: (t: number) => number): void {
   const now = (performance.now() - t0) / 1000;
-  writeAt(writePos % CAPACITY, now, s);
+  writeAt(writePos % CAPACITY, now, s, expectedAt ? expectedAt(now) : Number.NaN);
   writePos += 1;
   if (count < CAPACITY) count += 1;
 }
@@ -194,6 +202,7 @@ export function getLiveSeries(): LiveSeries {
       machinePosition: RING.machinePosition.subarray(0, count),
       machineSetpoint: RING.machineSetpoint.subarray(0, count),
       machineCommanded: RING.machineCommanded.subarray(0, count),
+      machineExpected: RING.machineExpected.subarray(0, count),
       sampleForce: RING.sampleForce.subarray(0, count),
       samplePosition: RING.samplePosition.subarray(0, count),
       length: count,
@@ -212,6 +221,7 @@ export function getLiveSeries(): LiveSeries {
     machinePosition: OUT.machinePosition,
     machineSetpoint: OUT.machineSetpoint,
     machineCommanded: OUT.machineCommanded,
+    machineExpected: OUT.machineExpected,
     sampleForce: OUT.sampleForce,
     samplePosition: OUT.samplePosition,
     length: CAPACITY,
