@@ -1,8 +1,28 @@
-# Requirements & browser support
+# What you need
 
-The MaD control app runs entirely in your browser — there's nothing to install
-and no server to set up. It does, however, rely on two newer browser features
-that only Chromium-based browsers currently support.
+MaD Control runs entirely in your browser. There is nothing to install and no
+server to set up.
+
+## Checklist
+
+- **Chrome or Edge on a desktop computer** (Windows, macOS or Linux).
+- **Two USB serial adapters** on the machine's controller, one per port:
+
+    | Port | Adapter | Where it plugs in | Used for |
+    |---|---|---|---|
+    | **Control port** | A USB-serial adapter (FTDI or similar) | The controller's secondary serial, P30/P32: header **J4** on the Edge carrier; on a P2-EVAL bench, adapter TX → P30, adapter RX ← P32, grounds joined | Everything day to day: live data, jogging, calibration, tests |
+    | **Programming port** | A Parallax Prop Plug | The **Debug/Programming header J1** (`P62 / P63 / RESn / GND`), or the P2-EVAL's own USB | Flashing firmware only |
+
+    Both can stay plugged in. [Power up and connect](connect.md#the-two-ports)
+    explains why there are two.
+
+- **A folder on your computer** for sample profiles, motion profiles and test
+  results. The app asks for it the first time it opens.
+- **A known weight** (ideally several, up to at least 20% of the load cell's
+  capacity) for the [load cell calibration](machine-setup.md#4-calibrate-the-load-cell).
+
+Most adapters work out of the box on macOS and Linux. Windows may need the
+adapter's USB-serial driver.
 
 ## Browser support
 
@@ -15,39 +35,18 @@ that only Chromium-based browsers currently support.
 | Safari | :material-close: No | No Web Serial API |
 | Mobile browsers | :material-close: No | No Web Serial API |
 
-!!! info "Why Chromium-only?"
-    The app talks to the machine with the **Web Serial API** and stores results
-    with the **File System Access API**. Both are implemented in Chromium but not
-    (yet) in Firefox or Safari. If you open the app in an unsupported browser it
-    shows an "unsupported browser" screen rather than failing silently.
-
-## What you need
-
-- **A Chromium browser** on a desktop OS (Windows, macOS, or Linux).
-- **A MaD machine** connected over **USB** (it presents as a USB-to-serial
-  device). Most adapters work out of the box on macOS and Linux; Windows may need
-  the USB-serial driver for your adapter.
-- **An empty folder** on your computer (optional but recommended) where the app
-  will save sample profiles, motion profiles, and test results. You grant access
-  to this folder once; the app remembers it.
-
-There is nothing to download — the app is served over HTTPS from GitHub Pages,
-which is also why Web Serial and File System Access are allowed (both require a
-secure context).
-
-## Connecting hardware
-
-The machine communicates at **2,000,000 baud** by default. The app lets you choose a
-different baud rate on the [Connect](../user-guide/connecting.md) screen, but the
-default matches the firmware out of the box.
-
-Power the machine on **before** connecting in the app — see the
-[power-up sequence](../how-it-works/the-machine.md#power-up-sequence).
+The app talks to the machine with the **Web Serial API** and saves results with
+the **File System Access API**. Only Chromium implements both. In any other
+browser the app shows an "unsupported browser" screen.
 
 ## Installing as an app (optional)
 
-Because it is a PWA, Chrome/Edge will offer to **install** MaD Control as a
-standalone desktop app (an icon in the address bar, or **⋮ → Cast, save, and
-share → Install page as app…**). Installed or not, it behaves identically and
-updates itself when a new version is published — though it will never reload
-mid-test; updates are deferred until you are idle and disconnected.
+Chrome and Edge offer to **install** MaD Control as a standalone window (an
+icon in the address bar, or **⋮ → Cast, save, and share → Install page as
+app…**). Installed or not, it behaves the same. When a new version is published
+the status bar shows **Update ready**; it is applied only when you click it
+while disconnected, so the app never reloads during a test.
+
+![Status bar offering an app update](../assets/screenshots/status-update-ready.png)
+
+Next: [Power up and connect](connect.md).

@@ -47,7 +47,7 @@ try {
   step(1, `Installed: ${await text(page.getByTestId('fw-version'))}; Protocol: ${await text(page.getByTestId('fw-protocol'))}`);
 
   // 2. Motion is refused.
-  await page.goto(`${APP_URL}#/live`);
+  await page.goto(`${APP_URL}#/control`);
   await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: 15_000 });
   await page.getByRole('button', { name: 'Enable motion' }).click();
   // The refusal's own toast; another may already be up about unreadable replies.
@@ -95,7 +95,7 @@ try {
   if (!bannerLeft) throw new Error('the banner stayed after the update');
 
   // 5. Motion works.
-  await page.goto(`${APP_URL}#/live`);
+  await page.goto(`${APP_URL}#/control`);
   await page.getByText(/Motion: (enabled|disabled)/).waitFor({ timeout: 15_000 });
   await page.getByRole('button', { name: 'Enable motion' }).click();
   await page.getByText('Motion: enabled').waitFor({ timeout: 10_000 });
@@ -122,7 +122,7 @@ try {
 } finally {
   // Leave the machine with motion off.
   try {
-    await page.goto(`${APP_URL}#/live`);
+    await page.goto(`${APP_URL}#/control`);
     const disable = page.getByRole('button', { name: 'Disable motion' });
     if (await disable.count()) {
       await disable.click();
