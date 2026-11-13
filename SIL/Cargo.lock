@@ -224,7 +224,6 @@ dependencies = [
  "embsim-core",
  "libc",
  "serde_json",
- "toml",
  "tracing",
  "tungstenite",
 ]
