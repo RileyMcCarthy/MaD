@@ -23,8 +23,8 @@ fn main() {
     }
     println!("clkfreq {} | virtual time {} us", m.clkfreq(), m.now_us());
     let mut pins: Vec<String> = Vec::new();
-    for p in 0..64usize {
-        if m.pins.mode[p] != 0 {
+    for (p, &mode) in m.pins.mode.iter().enumerate().take(64) {
+        if mode != 0 {
             pins.push(format!("{p}"));
         }
     }

@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
-import { RefLine, refLinesPlugin, rangeIncluding } from './uplotRef';
+import { RefLine, cursorTooltipPlugin, fitDataRange, refLinesPlugin, zoomStatePlugin } from './uplotRef';
+import ChartZoomBar from './ChartZoomBar';
 
 interface StaticScatterChartProps {
   xLabel: string;
@@ -25,6 +26,9 @@ export default function StaticScatterChart({
 }: StaticScatterChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const [zoomed, setZoomed] = useState(false);
+  const xsAll = points.map((p) => p.x).filter((v) => Number.isFinite(v));
+  const fullX: [number, number] = xsAll.length ? [Math.min(...xsAll), Math.max(...xsAll)] : [0, 1];
 
   useEffect(() => {
     const container = containerRef.current;
@@ -37,8 +41,8 @@ export default function StaticScatterChart({
       width: container.clientWidth || 600,
       height,
       scales: {
-        x: { time: false, ...(xRefLines.length ? { range: rangeIncluding(xRefLines) } : {}) },
-        y: yRefLines.length ? { range: rangeIncluding(yRefLines) } : {},
+        x: { time: false, range: fitDataRange(0.02) },
+        y: { range: fitDataRange() },
       },
       axes: [
         { stroke: '#8b93a3', label: xLabel, grid: { stroke: '#2a2f3a' }, ticks: { stroke: '#2a2f3a' } },
@@ -55,14 +59,17 @@ export default function StaticScatterChart({
           points: { show: true, size: 4 },
         },
       ],
-      plugins:
-        xRefLines.length || yRefLines.length
-          ? [refLinesPlugin({ x: xRefLines, y: yRefLines })]
-          : [],
+      cursor: { y: false },
+      plugins: [
+        ...(xRefLines.length || yRefLines.length ? [refLinesPlugin({ x: xRefLines, y: yRefLines })] : []),
+        cursorTooltipPlugin({ xLabel, xDecimals: 3 }),
+        zoomStatePlugin(fullX, setZoomed),
+      ],
     };
     const data: uPlot.AlignedData = [xs, ys];
     const plot = new uPlot(opts, data, container);
     plotRef.current = plot;
+    setZoomed(false);
 
     const resize = new ResizeObserver(() => {
       plot.setSize({ width: container.clientWidth || 600, height });
@@ -77,5 +84,12 @@ export default function StaticScatterChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [xLabel, yLabel, height, color, JSON.stringify(points), JSON.stringify(xRefLines), JSON.stringify(yRefLines)]);
 
-  return <div ref={containerRef} style={{ width: '100%' }} />;
+  const resetZoom = () => plotRef.current?.setScale('x', { min: fullX[0], max: fullX[1] });
+
+  return (
+    <div>
+      <ChartZoomBar zoomed={zoomed} onReset={resetZoom} />
+      <div ref={containerRef} style={{ width: '100%' }} />
+    </div>
+  );
 }

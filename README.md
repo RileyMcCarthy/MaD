@@ -31,7 +31,7 @@ compiled from the same Rust core used by the firmware tooling and the test rig.
 
 Open **<https://rileymccarthy.github.io/MaD/app/>** in Chrome or Edge, connect
 over USB, and run a test. See the
-[operator quick-start](https://rileymccarthy.github.io/MaD/getting-started/operators/).
+[getting started guide](https://rileymccarthy.github.io/MaD/getting-started/).
 
 > **Chromium-only:** Web Serial and the File System Access API are available only
 > in Chrome/Edge on desktop.
@@ -122,7 +122,7 @@ python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yam
 
 | If you want to… | Go to |
 |---|---|
-| Run your first test | [Getting started](https://rileymccarthy.github.io/MaD/getting-started/operators/) |
+| Set up a machine and run your first test | [Getting started](https://rileymccarthy.github.io/MaD/getting-started/) |
 | Learn every screen | [User guide](https://rileymccarthy.github.io/MaD/user-guide/) |
 | Understand the design | [How it works](https://rileymccarthy.github.io/MaD/how-it-works/) |
 | Build & contribute | [Developer guide](https://rileymccarthy.github.io/MaD/dev/) |

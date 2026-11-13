@@ -47,20 +47,19 @@ times, each containing ordered **moves**.
       "name": "Preload",
       "executions": 1,
       "moves": [
-        { "moveType": "linear", "absoluteOrRelative": "relative",
-          "moveParameters": { "distance": 5, "velocity": 5 } }
+        { "moveType": "linear",
+          "moveParameters": { "position": 5, "velocity": 5, "time": 0 } }
       ]
     },
     {
       "name": "Cycle",
       "executions": 3,
       "moves": [
-        { "moveType": "linear", "absoluteOrRelative": "relative",
-          "moveParameters": { "distance": 20, "velocity": 10 } },
-        { "moveType": "dwell", "absoluteOrRelative": "absolute",
-          "moveParameters": { "time": 500 } },
-        { "moveType": "linear", "absoluteOrRelative": "relative",
-          "moveParameters": { "distance": -20, "velocity": 10 } }
+        { "moveType": "math",
+          "moveParameters": { "position": 0, "velocity": 0, "time": 0,
+                              "waveform": "sine", "amplitude": 10, "frequency": 0.25 } },
+        { "moveType": "dwell",
+          "moveParameters": { "position": 0, "velocity": 0, "time": 500 } }
       ]
     }
   ]
@@ -69,19 +68,26 @@ times, each containing ordered **moves**.
 
 ### Move parameters
 
-`moveType` is `linear`, `dwell`, or `math` (waveform). The `moveParameters` object
-carries whichever fields apply:
+`moveType` is `linear`, `dwell`, or `math` (waveform). Every move carries
+`position`, `velocity` and `time` (0 where unused); a `math` move adds the
+fields for its waveform:
 
 | Field | Used by | Meaning |
 |---|---|---|
-| `position` | linear (absolute) | Target position (mm) |
-| `distance` | linear (relative) | Distance to move (mm) |
-| `velocity` | linear | Feed rate (mm/s) |
+| `position` | linear, sigmoid | Where the move ends (mm, absolute: sample extension from zero length) |
+| `velocity` | linear, sigmoid | Speed (mm/s) |
 | `time` | dwell | Hold time (ms) |
-| `waveform` | math | `sine` |
-| `amplitude`, `frequency`, `cycles`, `phase` | math | Waveform shape |
+| `waveform` | math | `sine` (the default when absent), `sigmoid` or `chirp` |
+| `amplitude` | sine, chirp | Peak deviation (mm); its sign is the direction it sets off in |
+| `frequency` | sine, chirp | Sine: cycles per second (Hz). Chirp: the frequency it starts at |
+| `endFrequency` | chirp | The frequency it sweeps to (Hz) |
+| `duration` | chirp | How long the sweep takes (s), rounded to whole cycles |
+| `acceleration` | sigmoid | Peak acceleration (mm/s²) |
 
-`absoluteOrRelative` is `absolute` or `relative` per move.
+Every position is absolute. A file with the old fields (`absoluteOrRelative`,
+`distance`, `cycles`, `phase`, `centre`, `dwellHigh`, `dwellLow`, `skew`, or a `triangle`
+waveform) is **refused** on load, import and run, with a message naming the
+move; rebuild it in [Motion profiles](motion-profiles.md).
 
 ## Recorded data — CSV
 
@@ -89,9 +95,9 @@ Downloaded test data is CSV. Note the units: the machine records in **finer unit
 than the app displays, so the numbers here are larger than what you see on screen.
 
 ```text
-time_us,force_mN,position_um,setpoint_um
-0,0,10000,10000
-50000,114,10300,10300
+time_us,force_mN,position_nm,setpoint_nm
+0,0,10000000,10000000
+50000,114,10300000,10300000
 ...
 ```
 
@@ -99,8 +105,8 @@ time_us,force_mN,position_um,setpoint_um
 |---|---|---|
 | `time_us` | µs | Timestamp |
 | `force_mN` | mN | Measured force |
-| `position_um` | µm | Measured position |
-| `setpoint_um` | µm | Commanded position |
+| `position_nm` | nm | Measured position |
+| `setpoint_nm` | nm | Where the motion trajectory put the carriage at that moment (the **Machine Setpoint** readout) |
 
 The [run viewer](test-history-and-analysis.md) converts these to N
 and mm and derives stress/strain. **Export CSV** adds a metadata header (sample/motion

@@ -65,8 +65,8 @@ fn setq_wrlong_with_an_immediate_fills_every_long_with_that_immediate() {
     let mut m = machine_running(&[setq, fill, JMP_SELF]);
     // Poison the target and its neighbour so a copy from cog RAM (all zero
     // here) would be visible as zeros, and a fill as the immediate.
-    for a in 0x70..0xA0 {
-        m.hub[a] = 0xFF;
+    for byte in &mut m.hub[0x70..0xA0] {
+        *byte = 0xFF;
     }
     m.step(8).expect("runs");
 

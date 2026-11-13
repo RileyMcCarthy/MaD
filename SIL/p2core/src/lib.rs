@@ -882,9 +882,9 @@ impl<P: PinBus> Machine<P> {
         hub[..n].copy_from_slice(&image[..n]);
 
         let mut cogs = vec![Cog::default(); NUM_COGS];
-        for i in 0..COGINIT_LOAD_LONGS {
+        for (i, reg) in cogs[0].regs.iter_mut().enumerate().take(COGINIT_LOAD_LONGS) {
             let a = i * 4;
-            cogs[0].regs[i] = u32::from_le_bytes([hub[a], hub[a + 1], hub[a + 2], hub[a + 3]]);
+            *reg = u32::from_le_bytes([hub[a], hub[a + 1], hub[a + 2], hub[a + 3]]);
         }
         cogs[0].running = true;
         cogs[0].pc = 0;
@@ -1920,8 +1920,8 @@ impl<P: PinBus> Machine<P> {
             .iter()
             .any(|&src| (event::CT1..event::CT1 + 3).contains(&src))
         {
-            for n in 0..3 {
-                if (end as u32).wrapping_sub(input.ct[n]) as i32 >= 0 {
+            for (n, &ct) in input.ct.iter().enumerate() {
+                if (end as u32).wrapping_sub(ct) as i32 >= 0 {
                     raised |= 1 << (event::CT1 as usize + n);
                 }
             }
@@ -2048,8 +2048,8 @@ impl<P: PinBus> Machine<P> {
             }
         });
         let mut until = now + WAIT_STALL_QUANTUM;
-        for n in 0..3 {
-            let dt = c.ct[n].wrapping_sub(now as u32) as i32;
+        for &ct in &c.ct {
+            let dt = ct.wrapping_sub(now as u32) as i32;
             if dt > 0 {
                 until = until.min(now + dt as u64);
             }
@@ -2479,8 +2479,8 @@ impl<P: PinBus> Machine<P> {
         if hubexec {
             fresh.pc = s;
         } else {
-            for i in 0..COGINIT_LOAD_LONGS {
-                fresh.regs[i] = self.rd_long(s.wrapping_add((i * 4) as u32));
+            for (i, reg) in fresh.regs.iter_mut().enumerate().take(COGINIT_LOAD_LONGS) {
+                *reg = self.rd_long(s.wrapping_add((i * 4) as u32));
             }
             fresh.pc = 0;
         }
@@ -4103,10 +4103,10 @@ impl<P: PinBus> Machine<P> {
                 self.cogs[cog].clear_after |= 1 << event::PAT;
             }
             Cogatn => {
-                for target in 0..NUM_COGS {
+                for (target, cog) in self.cogs.iter_mut().enumerate() {
                     if d & (1 << target) != 0 {
-                        self.cogs[target].atn_in = true;
-                        self.cogs[target].touch_events();
+                        cog.atn_in = true;
+                        cog.touch_events();
                     }
                 }
             }

@@ -7,7 +7,7 @@
  * stop the firmware contract requires.
  */
 
-import { TestProfile, WaveformFn } from './types';
+import { TestProfile } from './types';
 
 export interface GeneratedGcode {
   gcode: string[];
@@ -29,51 +29,96 @@ const round4 = (n: number): number => Math.round(n * 10000) / 10000;
 const round6 = (n: number): number => Math.round(n * 1000000) / 1000000;
 
 /**
- * Unit waveform value in [-1, 1] for a phase in *turns* (cycles; the fractional
- * part is used). Both shapes pass through 0 at the start of a cycle so a move
- * begins smoothly from the centre, and return to 0 after whole cycles.
+ * How far a wave of unit amplitude is from where it started, at a phase in
+ * *turns* (cycles): 1 − cos, from 0 at the start up to 2 at the far peak and
+ * back. The firmware starts a wave at rest where the carriage is (a peak) and
+ * sets off in the direction of the amplitude's sign.
  */
-export function waveformSample(fn: WaveformFn, turns: number): number {
-  // Phase 0 is the POSITIVE PEAK, matching the firmware's cycle template
-  // (hold at +A, traverse down, hold at -A, traverse up). It has to: a sinusoid
-  // can only be joined or left at rest at a peak, so that is where the driver
-  // starts, and a preview drawn from the centre would show the operator a
-  // trajectory the machine does not run.
-  if (fn === 'triangle') {
-    const t = turns - Math.floor(turns);
-    if (t < 0.5) return 1 - 4 * t; //   +1 → -1
-    return 4 * t - 3; //                -1 → +1
-  }
-  return Math.cos(2 * Math.PI * turns);
+export function waveFromStart(turns: number): number {
+  return 1 - Math.cos(2 * Math.PI * turns);
 }
 
-/** Peak velocity (mm/s) a waveform reaches — sine: 2πAf, triangle: 4Af. */
-export function waveformPeakVelocity(fn: WaveformFn, amplitude: number, frequency: number): number {
-  const k = fn === 'triangle' ? 4 : 2 * Math.PI;
-  return k * Math.abs(amplitude) * Math.abs(frequency);
+/** Peak velocity (mm/s) of a sine wave: 2πAf. */
+export function sinePeakVelocity(amplitude: number, frequency: number): number {
+  return 2 * Math.PI * Math.abs(amplitude) * Math.abs(frequency);
 }
 
 /**
- * Peak acceleration (mm/s²) a waveform demands — sine: (2πf)²A.
- *
- * A triangle's velocity is piecewise constant, so its acceleration is impulsive
- * at the turning points: unbounded in the ideal, and in practice whatever the
- * machine's limit is. Report 0 (i.e. "not the binding constraint") rather than
- * a fabricated finite number — v1 is sine-only anyway.
+ * Peak acceleration (mm/s²) of a sine wave: (2πf)²A.
  *
  * This matters because the firmware's closed-loop servo ENFORCES the machine
  * profile's acceleration limit: a waveform that demands more than the machine
  * is rated for is not rejected, it is tracked at the limit, and the recorded
  * motion comes out attenuated without anything looking like an error.
  */
-export function waveformPeakAcceleration(
-  fn: WaveformFn,
-  amplitude: number,
-  frequency: number,
-): number {
-  if (fn === 'triangle') return 0;
+export function sinePeakAcceleration(amplitude: number, frequency: number): number {
   const w = 2 * Math.PI * Math.abs(frequency);
   return w * w * Math.abs(amplitude);
+}
+
+/**
+ * A chirp's cycles: a linear sweep from f0 to f1 averages (f0+f1)/2, so a sweep
+ * of `duration` seconds holds that many cycles, rounded to a whole number (at
+ * least one) so it ends at rest where it started. Returns the cycles and the
+ * duration they actually take.
+ */
+export function chirpCycles(f0: number, f1: number, duration: number): { cycles: number; duration: number } {
+  const mean = (Math.abs(f0) + Math.abs(f1)) / 2;
+  if (!(mean > 0) || !(duration > 0)) return { cycles: 0, duration: 0 };
+  const cycles = Math.max(1, Math.round(duration * mean));
+  return { cycles, duration: cycles / mean };
+}
+
+/** Where a chirp has got to, in cycles, `t` seconds into a sweep from f0 to f1 over `span` s. */
+export function chirpTurns(f0: number, f1: number, span: number, t: number): number {
+  return f0 * t + ((f1 - f0) * t * t) / (2 * span);
+}
+
+/** Longest straight segment an S-curve's speed-up or braking is drawn with, s. */
+export const SIGMOID_SEGMENT_S = 0.01;
+
+/**
+ * An S-curve move of `distance` mm at up to `velocity` mm/s and `acceleration`
+ * mm/s². The acceleration rises and falls as a half-sine bump peaking at
+ * `acceleration`, so it never jumps: speeding up from rest to v takes
+ * Ta = pi*v / (2a) and covers a*Ta^2/pi. A move too short to reach `velocity`
+ * peaks lower, at sqrt(2*a*d/pi), and spends no time cruising. Braking mirrors
+ * the speed-up. Null for a move that cannot run (no distance, speed or
+ * acceleration).
+ */
+export interface SigmoidPlan {
+  /** Total time, s. */
+  duration: number;
+  /** Highest speed reached, mm/s. */
+  peakVelocity: number;
+  /** Time spent speeding up (and, mirrored, braking), s. */
+  rampTime: number;
+  /** Distance covered at `t` seconds from the start, mm (0 .. distance). */
+  at: (t: number) => number;
+}
+
+export function planSigmoid(distance: number, velocity: number, acceleration: number): SigmoidPlan | null {
+  const d = Math.abs(distance);
+  if (!(d > 0) || !(velocity > 0) || !(acceleration > 0)) return null;
+  let v = velocity;
+  let ta = (Math.PI * v) / (2 * acceleration);
+  let rampDist = (acceleration * ta * ta) / Math.PI;
+  if (2 * rampDist > d) {
+    v = Math.sqrt((2 * acceleration * d) / Math.PI);
+    ta = (Math.PI * v) / (2 * acceleration);
+    rampDist = d / 2;
+  }
+  const cruise = (d - 2 * rampDist) / v;
+  const duration = 2 * ta + cruise;
+  const ramp = (t: number): number => ((acceleration * ta) / Math.PI) * (t - (ta / Math.PI) * Math.sin((Math.PI * t) / ta));
+  const at = (t: number): number => {
+    if (t <= 0) return 0;
+    if (t >= duration) return d;
+    if (t <= ta) return ramp(t);
+    if (t <= ta + cruise) return rampDist + v * (t - ta);
+    return d - ramp(duration - t);
+  };
+  return { duration, peakVelocity: v, rampTime: ta, at };
 }
 
 export function generateTestGcode(profile: TestProfile): GeneratedGcode {
@@ -82,12 +127,19 @@ export function generateTestGcode(profile: TestProfile): GeneratedGcode {
   const time: number[] = [0];
   let currentTime = 0;
   let currentPosition = 0;
-  let currentMode: 'absolute' | 'relative' = 'absolute';
+  // The last sine cycle emitted, while nothing has moved since: the next
+  // identical one joins it as one more cycle of the same wave.
+  let sineRun: { line: number; amplitude: number; frequency: number; cycles: number } | null = null;
 
   gcode.push(`; Test Profile: ${profile.name}`);
   gcode.push(`; Description: ${profile.description}`);
   gcode.push('');
   gcode.push('G90 ; Set absolute positioning');
+
+  const point = (t: number, x: number) => {
+    time.push(round3(t));
+    distance.push(round3(x));
+  };
 
   profile.sets.forEach((set, setIndex) => {
     gcode.push(`; Set ${setIndex + 1}: ${set.name} (${set.executions} executions)`);
@@ -97,104 +149,116 @@ export function generateTestGcode(profile: TestProfile): GeneratedGcode {
       gcode.push(`; Execution ${i + 1}/${set.executions}`);
 
       set.moves.forEach((move) => {
-        const position = Number(move.moveParameters.position) || 0;
-        const velocity = Number(move.moveParameters.velocity) || 0;
-        const moveDistance = Number(move.moveParameters.distance) || 0;
-        const dwellTime = Number(move.moveParameters.time) || 0;
-
+        const p = move.moveParameters;
+        const position = Number(p.position) || 0;
+        const velocity = Number(p.velocity) || 0;
         const startPosition = currentPosition;
         const startTime = currentTime;
-
-        if (move.absoluteOrRelative === 'absolute' && currentMode !== 'absolute') {
-          gcode.push('G90 ; Set absolute positioning');
-          currentMode = 'absolute';
-        } else if (move.absoluteOrRelative === 'relative' && currentMode !== 'relative') {
-          gcode.push('G91 ; Set relative positioning');
-          currentMode = 'relative';
-        }
+        const isSine = move.moveType === 'math' && (p.waveform ?? 'sine') === 'sine';
+        if (!isSine) sineRun = null;
 
         switch (move.moveType) {
           case 'linear': {
-            if (move.absoluteOrRelative === 'absolute') {
-              gcode.push(`G1 X${position} F${velocity}`);
-              currentPosition = position;
-              currentTime += Math.abs(currentPosition - startPosition) / (velocity || 1);
-            } else {
-              gcode.push(`G1 X${moveDistance} F${velocity}`);
-              currentPosition += moveDistance;
-              currentTime += Math.abs(moveDistance) / (velocity || 1);
-            }
-            distance.push(startPosition);
-            time.push(startTime);
-            distance.push(currentPosition);
-            time.push(currentTime);
+            gcode.push(`G1 X${position} F${velocity}`);
+            currentPosition = position;
+            currentTime += Math.abs(currentPosition - startPosition) / (velocity || 1);
+            point(startTime, startPosition);
+            point(currentTime, currentPosition);
             break;
           }
           case 'dwell': {
+            const dwellTime = Number(p.time) || 0;
             gcode.push(`G4 P${dwellTime}`);
             currentTime += dwellTime / 1000;
-            distance.push(startPosition);
-            time.push(startTime);
-            distance.push(startPosition);
-            time.push(currentTime);
+            point(startTime, startPosition);
+            point(currentTime, startPosition);
             break;
           }
           case 'math': {
-            // Firmware-native waveform: emit ONE G123 canned cycle. The firmware
-            // segments f(t) itself and runs it unattended from SD (no host G1
-            // expansion). The wave oscillates about the *current* position, so we
-            // ramp to the mean first. Centre = absolute target, or current
-            // position (+ any relative offset).
-            // The shape now reaches the driver and is honoured there, so emit
-            // what was authored. It was pinned to sine while app_motion masked
-            // the shape bit off and evaluated sinf regardless — emitting W1 then
-            // would have promised a triangle and run a sine.
-            const fn: WaveformFn = move.moveParameters.waveform === 'triangle' ? 'triangle' : 'sine';
-            const amplitude = Math.abs(Number(move.moveParameters.amplitude) || 0);
-            const frequency = Number(move.moveParameters.frequency) || 0;
-            const cycles = Number(move.moveParameters.cycles) || 0;
-            const mean = move.absoluteOrRelative === 'absolute' ? position : startPosition + moveDistance;
-
-            if (amplitude > 0 && frequency > 0 && cycles > 0) {
-              if (currentMode !== 'absolute') {
-                gcode.push('G90 ; Set absolute positioning');
-                currentMode = 'absolute';
-              }
-              // Ramp to the mean (the firmware waveform oscillates about it).
-              if (Math.abs(mean - currentPosition) > 1e-6) {
-                const rampV = waveformPeakVelocity(fn, amplitude, frequency) || 1;
-                gcode.push(`G1 X${round3(mean)} F${round3(rampV)}`);
-              }
-              const shape = fn === 'triangle' ? 1 : 0; // WaveformShape
-              // Hold and skew are appended ONLY when they differ from a plain
-              // symmetric cycle, so an existing profile emits the exact line it
-              // always did and its golden G-code does not churn.
-              const dwellHigh = Math.max(0, Number(move.moveParameters.dwellHigh) || 0);
-              const dwellLow = Math.max(0, Number(move.moveParameters.dwellLow) || 0);
-              const skew = Number(move.moveParameters.skew) || 0.5;
-              let extra = '';
-              if (dwellHigh > 0) extra += ` H${round3(dwellHigh)}`;
-              if (dwellLow > 0) extra += ` L${round3(dwellLow)}`;
-              if (Math.abs(skew - 0.5) > 1e-9) extra += ` S${round3(skew)}`;
+            if (p.waveform === 'sigmoid') {
+              // An S-curve move, sent as straight segments whose speeds follow
+              // the curve: short ones through the speed-up and braking, one
+              // through the cruise. The firmware carries the speed from each
+              // into the next (look-ahead), so they run as one smooth motion;
+              // their targets are absolute, so the move ends exactly on position.
+              const plan = planSigmoid(position - startPosition, velocity, Number(p.acceleration) || 0);
+              if (plan === null) break;
+              const dir = position >= startPosition ? 1 : -1;
               gcode.push(
-                `G123 A${round4(amplitude)} F${round6(frequency)} C${Math.round(cycles)} W${shape}${extra}` +
-                  ` ; ${fn} A=${amplitude}mm f=${frequency}Hz x${cycles} cycle(s)`,
+                `; sigmoid to ${position} mm at ${velocity} mm/s, ${Number(p.acceleration) || 0} mm/s2`,
               );
-              // Preview chart only: sample f(t) for display (not emitted as motion).
-              const previewSteps = Math.min(
-                WAVEFORM_MAX_SEGMENTS,
-                Math.max(8, Math.round(cycles * WAVEFORM_SEGMENTS_PER_CYCLE)),
-              );
-              const totalSec = cycles / frequency;
-              distance.push(round3(mean));
-              time.push(round3(currentTime));
-              for (let k = 1; k <= previewSteps; k++) {
-                distance.push(round3(mean + amplitude * waveformSample(fn, (k / previewSteps) * cycles)));
-                time.push(round3(currentTime + (k / previewSteps) * totalSec));
+              const rampSteps = Math.max(4, Math.ceil(plan.rampTime / SIGMOID_SEGMENT_S));
+              const cruise = plan.duration - 2 * plan.rampTime;
+              const times: number[] = [];
+              for (let k = 1; k <= rampSteps; k++) times.push((k / rampSteps) * plan.rampTime);
+              if (cruise > 1e-9) times.push(plan.rampTime + cruise);
+              for (let k = 1; k <= rampSteps; k++) times.push(plan.rampTime + cruise + (k / rampSteps) * plan.rampTime);
+              let fromT = 0;
+              let from = startPosition;
+              point(startTime, startPosition);
+              for (const t of times) {
+                const to = t >= plan.duration ? position : round3(startPosition + dir * plan.at(t));
+                if (Math.abs(to - from) >= 0.001) {
+                  const feed = Math.max(0.001, round3(Math.abs(to - from) / (t - fromT)));
+                  gcode.push(`G1 X${to} F${feed}`);
+                  from = to;
+                  fromT = t;
+                }
+                point(startTime + t, to);
               }
-              currentTime += totalSec;
-              currentPosition = mean; // whole cycles end at the mean
+              currentTime = startTime + plan.duration;
+              currentPosition = position;
+              break;
             }
+            if (p.waveform === 'chirp') {
+              // The firmware's own G123 with an end frequency: one sweep of
+              // whole cycles, a cosine from rest where the gantry is.
+              const amplitude = Number(p.amplitude) || 0;
+              const f0 = Number(p.frequency) || 0;
+              const f1 = Number(p.endFrequency) || 0;
+              const sweep = chirpCycles(f0, f1, Number(p.duration) || 0);
+              if (!(Math.abs(amplitude) > 0 && f0 > 0 && f1 > 0 && sweep.cycles > 0)) break;
+              gcode.push(
+                `G123 A${round4(amplitude)} F${round6(f0)} C${sweep.cycles} W0 E${round6(f1)}` +
+                  ` ; chirp A=${amplitude}mm ${f0}->${f1}Hz, ${sweep.cycles} cycle(s) in ${round3(sweep.duration)}s`,
+              );
+              const steps = Math.min(WAVEFORM_MAX_SEGMENTS, sweep.cycles * WAVEFORM_SEGMENTS_PER_CYCLE * 2);
+              point(currentTime, startPosition);
+              for (let k = 1; k <= steps; k++) {
+                const t = (k / steps) * sweep.duration;
+                point(currentTime + t, startPosition + amplitude * waveFromStart(chirpTurns(f0, f1, sweep.duration, t)));
+              }
+              currentTime += sweep.duration;
+              currentPosition = startPosition;
+              break;
+            }
+            // Sine: one cycle of the firmware's own G123 canned cycle, a cosine
+            // from rest where the gantry is, which is a peak of the wave. One
+            // wave of N cycles and N back-to-back one-cycle waves trace the
+            // same path, but one command lets the firmware run them without a
+            // handover at every cycle, so identical cycles are joined.
+            // Signed: the direction the wave sets off in from where it starts.
+            const amplitude = Number(p.amplitude) || 0;
+            const frequency = Number(p.frequency) || 0;
+            if (!(Math.abs(amplitude) > 0 && frequency > 0)) break;
+            if (sineRun && sineRun.amplitude === amplitude && sineRun.frequency === frequency) {
+              sineRun.cycles += 1;
+            } else {
+              sineRun = { line: gcode.length, amplitude, frequency, cycles: 1 };
+              gcode.push('');
+            }
+            gcode[sineRun.line] =
+              `G123 A${round4(amplitude)} F${round6(frequency)} C${sineRun.cycles} W0` +
+              ` ; sine A=${amplitude}mm f=${frequency}Hz x${sineRun.cycles} cycle(s)`;
+            // Preview chart only: sample one cycle for display (not emitted as motion).
+            const steps = WAVEFORM_SEGMENTS_PER_CYCLE;
+            const cycleS = 1 / frequency;
+            point(currentTime, startPosition);
+            for (let k = 1; k <= steps; k++) {
+              point(currentTime + (k / steps) * cycleS, startPosition + amplitude * waveFromStart(k / steps));
+            }
+            currentTime += cycleS;
+            currentPosition = startPosition; // a whole cycle ends where it started
             break;
           }
           default:
