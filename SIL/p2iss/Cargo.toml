@@ -1,6 +1,6 @@
 [package]
 name = "p2iss"
-description = "The P2 instruction-set simulator as a live embsim board component"
+description = "The P2 instruction-set simulator as the core of embsim's P2 package"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,18 +10,17 @@ repository.workspace = true
 p2core = { path = "../p2core" }
 embsim-board = { path = "../embsim/board" }
 embsim-core = { path = "../embsim/core" }
-# The flash and card nodes read through their parts' own datasheet
-# thresholds, which embsim-models declares beside the parts' models.
-embsim-models = { path = "../embsim/models" }
 # The P2 package the ISS sits in as a core (`P2IssCore`): its pads, bank
 # supplies, START gate and crystal.
 embsim-boards = { path = "../embsim/boards" }
 tracing.workspace = true
-nix = { version = "0.31", features = ["term", "fs"] }
-libc = "0.2"
 
 [dev-dependencies]
 rstest.workspace = true
+# The module's flash, card, rails and Prop Plug in the tests' systems.
+embsim-models = { path = "../embsim/models" }
+# `iss_speed`'s CPU time and load average.
+libc = "0.2"
 # The host side of the protocol tests parses the firmware's replies with the
 # same framing layer the app's runtime uses.
 protoemb-framing = { path = "../../Protocol/ProtoEmb/framing" }

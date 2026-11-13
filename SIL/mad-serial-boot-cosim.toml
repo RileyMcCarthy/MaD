@@ -130,11 +130,11 @@ encoder_output = "rs422"
 # (Software/Control/src/firmware/webSerialTransport.ts). Nothing starts at
 # `embsim check`; `embsim run` launches Chrome headless at the node's first
 # slice and prints where its DevTools are. The DevTools port is fixed so the
-# e2e's CDP_URL holds; the port is granted to every origin, as the board
-# route grants it today (--granted, SIL/scripts/board-route.sh). Its USB
-# ids, 0403:6015, are an FTDI FT231X's, the chip in Parallax's USB adapters,
-# the Prop Plug on J1 (inferred; the P2-EVAL's own Parallax FT231X reports
-# them): the ids the e2e expects on the ROM board (read:
+# e2e's CDP_URL holds; the port is granted to every origin (`granted = true`,
+# below). Its USB ids, 0403:6015 (`usb_vendor_id` and `usb_product_id`,
+# below), are an FTDI FT231X's, the chip in Parallax's USB adapters, the Prop
+# Plug on J1 (inferred; the P2-EVAL's own Parallax FT231X reports them): the
+# ids the e2e expects on the ROM board (read:
 # Software/Control/e2e/fixtures.mjs, E2E_PORT_USB).
 [[component]]
 name = "HOST"

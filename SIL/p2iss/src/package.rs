@@ -1,10 +1,8 @@
 //! The ISS as the core inside embsim's P2 package: [`P2IssCore`].
 //!
-//! [`crate::P2Iss`] is a component on no board, declaring the pins its lists
-//! name. [`P2IssCore`] is the same machine — the same [`p2core::Machine`],
-//! the same `NetPins` bus — as an [`embsim_boards::p2::P2Core`], so
-//! it fills a module's processor slot (`U100` on the P2-EC32MB) inside
-//! [`embsim_boards::p2::P2Package`]. The package declares the 86 pins, holds
+//! [`P2IssCore`] is the [`p2core::Machine`], on the crate's `NetPins` bus,
+//! as an [`embsim_boards::p2::P2Core`], so it fills a module's processor
+//! slot (`U100` on the P2-EC32MB) inside [`embsim_boards::p2::P2Package`]. The package declares the 86 pins, holds
 //! the core until the chip can run (its START gate), and hands it
 //! [`P2Pads`]; the core takes all 64 pads and reads every one.
 //!
@@ -926,14 +924,12 @@ impl NetPins {
             .lock()
             .expect("edge queue never poisoned")
             .clear();
-        if let Some(core_shared) = self.core_shared.as_ref() {
-            core_shared.rx_mask.store(0, Ordering::Relaxed);
-            core_shared
-                .rx
-                .lock()
-                .expect("rx map never poisoned")
-                .clear();
-        }
+        self.core_shared.rx_mask.store(0, Ordering::Relaxed);
+        self.core_shared
+            .rx
+            .lock()
+            .expect("rx map never poisoned")
+            .clear();
         self.inner.reset_pins();
         self.net_yield = false;
         self.clock = 0;
@@ -1017,10 +1013,7 @@ impl NetPins {
     pub(crate) fn core_wxpin(&mut self, pin: u8) {
         let p = pin & 63;
         let receives = self.inner.pins[usize::from(p)].mode() == PinMode::AsyncRx;
-        let had = self
-            .core_shared
-            .as_ref()
-            .is_some_and(|c| c.rx_mask.load(Ordering::Relaxed) & (1u64 << p) != 0);
+        let had = self.core_shared.rx_mask.load(Ordering::Relaxed) & (1u64 << p) != 0;
         if receives || had {
             self.core_op(CoreOp::Wxpin { pin: p });
         }
@@ -1031,9 +1024,7 @@ impl NetPins {
     pub(crate) fn retune_rx(&mut self, pin: u8) {
         let p = pin & 63;
         let bit = 1u64 << p;
-        let Some(core_shared) = self.core_shared.clone() else {
-            return;
-        };
+        let core_shared = Arc::clone(&self.core_shared);
         let smart = self.inner.pins[usize::from(p)];
         let mut rx = core_shared.rx.lock().expect("rx map never poisoned");
         if smart.mode() != PinMode::AsyncRx {
@@ -1341,7 +1332,7 @@ impl NetPins {
     /// clock: every byte stamped at or before it has landed. `None` for a
     /// pin that is not one.
     fn with_core_rx<T>(&self, pin: u8, f: impl FnOnce(&mut RxPin) -> T) -> Option<T> {
-        let core_shared = self.core_shared.as_ref()?;
+        let core_shared = &self.core_shared;
         let p = pin & 63;
         if core_shared.rx_mask.load(Ordering::Relaxed) & (1u64 << p) == 0 {
             return None;
@@ -1393,16 +1384,15 @@ impl NetPins {
             .tx_pace
             .values()
             .flat_map(|pace| [pace.loaded_at, pace.idle_at]);
-        let rx: Vec<u64> = self.core_shared.as_ref().map_or_else(Vec::new, |shared| {
-            shared
-                .rx
-                .lock()
-                .expect("rx map never poisoned")
-                .values()
-                .filter_map(|rx| rx.pin.arriving.front())
-                .map(|&(at, _)| core.clock.ns_to_clocks_ceil(at))
-                .collect()
-        });
+        let rx: Vec<u64> = self
+            .core_shared
+            .rx
+            .lock()
+            .expect("rx map never poisoned")
+            .values()
+            .filter_map(|rx| rx.pin.arriving.front())
+            .map(|&(at, _)| core.clock.ns_to_clocks_ceil(at))
+            .collect();
         tx.chain(rx).filter(|&at| at > now).min()
     }
 
@@ -1410,19 +1400,18 @@ impl NetPins {
     /// period yet, has seen its line move.
     fn p63_carried(&self) -> bool {
         self.with_core_rx(63, |rx| rx.waiting) == Some(true)
-            || self.core_shared.as_ref().is_some_and(|core_shared| {
-                core_shared
-                    .rx
-                    .lock()
-                    .expect("rx map never poisoned")
-                    .get(&63)
-                    .is_some_and(CoreRx::line_moved)
-            })
+            || self
+                .core_shared
+                .rx
+                .lock()
+                .expect("rx map never poisoned")
+                .get(&63)
+                .is_some_and(CoreRx::line_moved)
     }
 
     /// `TESTP` on a receive pin: a byte is waiting.
     ///
-    /// A known gap, kept from [`crate::P2Iss`]: the autobaud pins `P0` and
+    /// A known gap: the autobaud pins `P0` and
     /// `P1`, while they are no receive pins of their own, read high once the
     /// programming UART, `P63`, has carried anything since it became a
     /// receive pin: a byte waiting, or, before the guest has given `P63` a
@@ -1484,9 +1473,12 @@ impl P2IssCore {
         // The flash and the card are the board's, on the nets: the bus
         // clocks the synchronous-serial smart pins on the guest's clock.
         board.enable_smart_bus();
-        let mut bus = NetPins::new(board, Vec::new(), Arc::clone(&shared));
-        bus.shutdown = Arc::clone(&shutdown);
-        bus.core_shared = Some(Arc::clone(&core_shared));
+        let bus = NetPins::new(
+            board,
+            Arc::clone(&shared),
+            Arc::clone(&core_shared),
+            Arc::clone(&shutdown),
+        );
         let mut machine = Machine::with_boot_rom(rom, bus);
         // A clock word ends the pass, so the guest is retimed before it runs
         // on at the new rate.
@@ -1506,7 +1498,7 @@ impl P2IssCore {
         P2IssHandle {
             shared: Arc::clone(&self.shared),
             machine: Arc::clone(&self.machine),
-            core: Some(Arc::clone(&self.core_shared)),
+            core: Arc::clone(&self.core_shared),
         }
     }
 }
@@ -2017,73 +2009,59 @@ fn drain_edges(machine: &mut Machine<NetPins>, shared: &Shared) {
 }
 
 impl P2IssHandle {
-    /// The START instant the package started the core at, once it has; for
-    /// a [`crate::P2Iss`], always `None`.
+    /// The START instant the package started the core at, once it has.
     pub fn started_at_ns(&self) -> Option<u64> {
-        let core = self.core.as_ref()?;
-        *core.started_at_ns.lock().expect("start never poisoned")
+        *self
+            .core
+            .started_at_ns
+            .lock()
+            .expect("start never poisoned")
     }
 
-    /// The crystal the package last delivered on `XI`, for a core.
+    /// The crystal the package last delivered on `XI`.
     pub fn crystal_hz(&self) -> Option<u64> {
-        self.core.as_ref()?.crystal()
+        self.core.crystal()
     }
 
-    /// The rate the guest's clock runs at. For a core, by its clock word and
-    /// the crystal, as of the last wake, once it has run. For a
-    /// [`crate::P2Iss`], its machine's own rate
-    /// ([`p2core::Machine::clock_hz`]): RCFAST from a ROM boot until a clock
-    /// word leaves it.
+    /// The rate the guest's clock runs at, by its clock word and the
+    /// crystal, as of the last wake, once it has run.
     pub fn clock_hz(&self) -> Option<u64> {
-        let Some(core) = self.core.as_ref() else {
-            let machine = self.machine.lock().expect("machine never poisoned");
-            return Some(u64::from(machine.clock_hz()));
-        };
-        let hz = core.clock_hz.load(Ordering::Relaxed);
+        let hz = self.core.clock_hz.load(Ordering::Relaxed);
         (hz != 0).then_some(hz)
     }
 
     /// The virtual instant the guest's current clock rate took effect: its
-    /// last clock word's, or the START instant before its first. For a
-    /// core, once it has run.
+    /// last clock word's, or the START instant before its first. Once it
+    /// has run.
     pub fn clock_set_at_ns(&self) -> Option<u64> {
         self.clock_hz()?;
-        Some(self.core.as_ref()?.clock_set_at_ns.load(Ordering::Relaxed))
+        Some(self.core.clock_set_at_ns.load(Ordering::Relaxed))
     }
 
     /// Whether the guest has no clock: its clock word selects a source that
     /// does not run, or a crystal that does not reach `XI`.
     pub fn stalled(&self) -> bool {
-        self.core
-            .as_ref()
-            .is_some_and(|core| core.stalled.load(Ordering::Relaxed))
+        self.core.stalled.load(Ordering::Relaxed)
     }
 
-    /// Resets the core entered (`RESN` asserted while it ran), for a core.
+    /// Resets the core entered (`RESN` asserted while it ran).
     pub fn resets(&self) -> u64 {
-        self.core
-            .as_ref()
-            .map_or(0, |core| core.resets.load(Ordering::Relaxed))
+        self.core.resets.load(Ordering::Relaxed)
     }
 
-    /// Whether the chip is in reset now, for a core.
+    /// Whether the chip is in reset now.
     pub fn in_reset(&self) -> bool {
-        self.core
-            .as_ref()
-            .is_some_and(|core| core.in_reset.load(Ordering::Relaxed))
+        self.core.in_reset.load(Ordering::Relaxed)
     }
 
     /// Whether the package held the core (a brownout without a reset).
     pub fn held(&self) -> bool {
-        self.core
-            .as_ref()
-            .is_some_and(|core| core.held.load(Ordering::Relaxed))
+        self.core.held.load(Ordering::Relaxed)
     }
 
-    /// The reset inputs as the package last delivered them, for a core.
+    /// The reset inputs as the package last delivered them.
     pub fn reset(&self) -> Option<P2ResetState> {
-        let core = self.core.as_ref()?;
-        Some(*core.reset.lock().expect("reset never poisoned"))
+        Some(*self.core.reset.lock().expect("reset never poisoned"))
     }
 
     /// The trap that stopped the guest, if one has.
@@ -2435,10 +2413,10 @@ mod tests {
     fn core_pins() -> NetPins {
         let mut bus = NetPins::new(
             Board::new(SdCard::blank(0)),
-            Vec::new(),
             Arc::new(Shared::default()),
+            Arc::new(CoreShared::default()),
+            Arc::new(AtomicBool::new(false)),
         );
-        bus.core_shared = Some(Arc::new(CoreShared::default()));
         let mut core = CorePads::new(BankSupplies::unpowered(), Vec::new());
         core.clock.set_word(PLL_160, 0, Some(20_000_000), 0);
         bus.core = Some(Box::new(core));
@@ -2477,8 +2455,6 @@ mod tests {
         bus.wxpin(RX_PIN, X_2MBAUD);
         bus.retune_rx(RX_PIN);
         bus.core_shared
-            .as_ref()
-            .expect("a core's bus")
             .rx
             .lock()
             .expect("rx map never poisoned")

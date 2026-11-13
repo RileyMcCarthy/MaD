@@ -11,7 +11,12 @@ Scoped 2026-09-18 against `feat/iss-rom-serial-flash` (uncommitted WIP included)
 and embsim `origin/main` at `21a25d5`. Revised 2026-09-19: embsim receives P2
 ISS items only, and flashing gets its own embsim test. Revised again the same
 day: board ownership, the P2-EC32MB module goes to embsim, MaD's boards come
-home.
+home. Since MaD #298 (2026-11) the `p2iss` tests named below that ran
+`P2Iss` on bare nets (`rom_boot_net`, `rom_serial_net`, `level_pins`,
+`protocol_on_levels`, `pty_protocol`, `sd_mount`, `sd_node`), and the
+`flashnode` they used, are gone; the module's own tests
+(`ec32mb_flash_boot`, `ec32mb_serial_flash`, `ec32mb_sd_mount`) run
+`P2IssCore` in the P2-EC32MB's package.
 
 **Bottom line:** feasible and mostly mechanical. `p2core` was written dep-free
 for exactly this, and embsim already carries `embsim-cpu-oracle` as the generic

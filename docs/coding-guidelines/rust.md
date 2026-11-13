@@ -121,7 +121,7 @@ Every source file opens with a `//!` crate/module doc comment explaining *what i
 
 ## 5. `unsafe`
 
-The emulator does not link host-compiled firmware and does not provide HAL trampolines. The firmware under test is the P2 image, executed by `p2core`. `unsafe` in the MaD crates is the edge where Rust talks to the OS: `libc` calls on a PTY's descriptor in a test (`p2iss/tests/pty_protocol.rs`) or for the process's CPU time in an example (`p2iss/examples/iss_speed.rs`), and PTY file descriptors inside embsim's `HostPty`.
+The emulator does not link host-compiled firmware and does not provide HAL trampolines. The firmware under test is the P2 image, executed by `p2core`. `unsafe` in the MaD crates is the edge where Rust talks to the OS: `libc` calls for the process's CPU time and the host's load average in an example (`p2iss/examples/iss_speed.rs`, `cpu_s` and `main`), and PTY file descriptors inside embsim's `HostPty`.
 
 **Do:**
 - Keep `unsafe` at that OS edge. A signal handler may only touch async-signal-safe operations (a store to an atomic, say), and every `unsafe` block says why it holds in a `// SAFETY:` comment.

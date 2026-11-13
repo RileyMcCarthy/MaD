@@ -504,7 +504,6 @@ dependencies = [
  "embsim-core",
  "embsim-models",
  "libc",
- "nix",
  "p2core",
  "protoemb-framing",
  "rstest 0.26.1",
