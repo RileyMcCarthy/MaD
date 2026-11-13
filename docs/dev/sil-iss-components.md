@@ -107,6 +107,10 @@ Original detail follows.
 
 ### S1 (original) — microSD as a node — built, one gap left
 
+*`SdCardNode`, `P2Iss::with_spi` and `sd_node.rs`, below, went with `P2Iss`
+(MaD #298). The card is embsim's model in the module's socket
+(`p2iss/tests/ec32mb_sd_mount.rs`).*
+
 The bus is real. `p2core::SpiShift` is a bit-level shifter pair
 (`p2core/src/spi.rs`), `p2iss::spi_bus::SpiSequencer` drives the clock and MOSI
 as `TheveninDrive` levels one transition at a time, and
@@ -480,6 +484,12 @@ regression tests (see F1). The submodule is on the unmerged branch
 [embsim](https://github.com/RileyMcCarthy/embsim) before the MaD pin bump.
 
 ### G4 — the SD smart-pin path is generalized — **DONE**
+
+*`with_sync_serial`, `SdCardNode` and the pump's `NetPins::next_edge_ns`,
+below, went with `P2Iss` (MaD #298). `p2core::smartbus` stays: inside the
+package (B3) it is the pads' synchronous-serial hardware on the guest's own
+clock, and the card is embsim's SD card model in the module's socket
+(`p2iss/tests/ec32mb_sd_mount.rs`).*
 
 The SD card is now as decoupled from the CPU as the flash. `p2core::smartbus`
 models the P2's synchronous-serial smart pins as CPU hardware: it reads the
