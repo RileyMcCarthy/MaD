@@ -23,7 +23,6 @@
 #include "app_gauge.h"          // app_gauge_coord_E
 #include "dev_forceGauge_config.h" // dev_forceGauge_channel_E
 #include "IO_SDCard.h"          // IO_SDCard_channel_E, IO_SDCard_mode_E
-#include "IO_positionFeedback.h"// IO_positionFeedback_channel_E
 
 #include "app_monitor.h"
 
@@ -74,18 +73,6 @@ int32_t app_motion_getCommandedPosition(void) { return dbl_commanded; }
 /* --- app_testManagement --- */
 static bool dbl_testRunning; // app_testManagement_isRunning()
 bool app_testManagement_isRunning(void) { return dbl_testRunning; }
-
-/* --- IO_positionFeedback --- */
-static int dbl_setValue_calls;
-static IO_positionFeedback_channel_E dbl_setValue_lastChannel;
-static int32_t dbl_setValue_lastValue;
-bool IO_positionFeedback_setValue(IO_positionFeedback_channel_E ch, int32_t positionUM)
-{
-    dbl_setValue_calls++;
-    dbl_setValue_lastChannel = ch;
-    dbl_setValue_lastValue = positionUM;
-    return true;
-}
 
 /* --- IO_SDCard --- */
 static int dbl_open_calls;
@@ -180,10 +167,6 @@ static void reset_doubles(void)
     dbl_forceIndex = 0;
     dbl_commanded = 0;
     dbl_testRunning = false;
-
-    dbl_setValue_calls = 0;
-    dbl_setValue_lastChannel = (IO_positionFeedback_channel_E)0;
-    dbl_setValue_lastValue = 0;
 
     dbl_open_calls = 0;
     dbl_open_returns = true;
@@ -304,45 +287,8 @@ void test_setOutput_publishes_raw_machine_force_and_position(void)
 }
 
 /**********************************************************************
- * Tests: request processing (zero / set position, sample profile)
+ * Tests: request processing (sample profile)
  **********************************************************************/
-
-void test_zeroPosition_request_calls_setValue_zero_once(void)
-{
-    VIBES_TEST("monitor.zero-position-sets-feedback-once",
-               "src/APP/app_monitor.c#app_monitor_zeroPosition",
-               "the operator zeroes the machine position");
-    VIBES_EXPECT("encoder-zeroed", "the position-feedback encoder is set to zero on the next cycle");
-    VIBES_EXPECT_WHY("written-once",
-                     "no further write reaches the encoder on later cycles",
-                     "the encoder origin is written once; repeating it every cycle would keep resetting the coordinate the drive follows");
-    app_monitor_zeroPosition();
-
-    /* Request is latched, not acted on until run(). */
-    TEST_ASSERT_EQUAL_INT(0, dbl_setValue_calls);
-
-    app_monitor_run();
-    TEST_ASSERT_EQUAL_INT(1, dbl_setValue_calls);
-    TEST_ASSERT_EQUAL_INT(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, dbl_setValue_lastChannel);
-    TEST_ASSERT_EQUAL_INT32(0, dbl_setValue_lastValue);
-
-    /* Request is one-shot: a second run() does NOT re-fire it. */
-    app_monitor_run();
-    TEST_ASSERT_EQUAL_INT(1, dbl_setValue_calls);
-}
-
-void test_setPosition_request_passes_value_through(void)
-{
-    VIBES_TEST("monitor.set-position-passes-through",
-               "src/APP/app_monitor.c#app_monitor_setPosition",
-               "a requested machine position of -1234567 micrometres");
-    VIBES_EXPECT("value-written", "the next monitor cycle writes that exact value to the position-feedback encoder");
-    app_monitor_setPosition(-1234567);
-    app_monitor_run();
-    TEST_ASSERT_EQUAL_INT(1, dbl_setValue_calls);
-    TEST_ASSERT_EQUAL_INT32(-1234567, dbl_setValue_lastValue);
-    TEST_ASSERT_EQUAL_INT(IO_POSITION_FEEDBACK_CHANNEL_SERVO_FEEDBACK, dbl_setValue_lastChannel);
-}
 
 void test_setSampleProfile_loads_on_run_and_is_readable(void)
 {
@@ -954,8 +900,6 @@ int main(void)
     RUN_TEST(test_sample_time_is_relative_to_test_start);
     RUN_TEST(test_setOutput_publishes_raw_machine_force_and_position);
 
-    RUN_TEST(test_zeroPosition_request_calls_setValue_zero_once);
-    RUN_TEST(test_setPosition_request_passes_value_through);
     RUN_TEST(test_setSampleProfile_loads_on_run_and_is_readable);
     RUN_TEST(test_setSampleProfile_null_returns_false);
     RUN_TEST(test_getSampleProfile_null_is_safe_noop);

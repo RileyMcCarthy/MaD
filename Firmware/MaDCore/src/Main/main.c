@@ -1,9 +1,5 @@
-#define P2_TARGET_MHZ 200
 #include "MaD.h"
 #include "HAL_system.h"
-#if PROPELLER_FRAMEWORK == P2LLVM
-#include <sys/p2es_clock.h>
-#endif
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>

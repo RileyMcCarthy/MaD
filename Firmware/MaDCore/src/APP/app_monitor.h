@@ -62,8 +62,6 @@ typedef struct
 void app_monitor_init(int lock);
 void app_monitor_run(void);
 
-void app_monitor_zeroPosition(void);
-void app_monitor_setPosition(int32_t positionUM);
 void app_monitor_setTestName(const char *testName);
 void app_monitor_getTestName(char *outName, uint32_t size);
 

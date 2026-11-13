@@ -651,7 +651,6 @@ typedef enum
     DEV_SERVO_WAVE_SETTLE   /* after the last cycle: rest where it started */
 } dev_servo_waveSegment_E;
 #define DEV_SERVO_PI 3.14159265358979f
-#define DEV_SERVO_TWO_PI 6.283185307179586f
 
 /* Peak rate and peak acceleration a shape demands at amplitude A and frequency f. */
 /* Solve ONE traverse: can the machine cover 2A in `tau` seconds with this

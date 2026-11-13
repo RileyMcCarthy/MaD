@@ -2,10 +2,9 @@
  * Unit tests for lib_staticQueue — the fixed-capacity ring every sample the
  * machine records passes through on its way to the SD card.
  *
- * This suite exists because the module had none. lib_staticQueue.c is compiled
- * into every test binary already (build_src_filter +<Library/>), so it was
- * linked into all 306 existing tests and exercised by none of them — the one
- * data structure between a 1 kHz sampler and the card, with no coverage.
+ * lib_staticQueue.c is compiled into every test binary (build_src_filter
+ * +<Library/>); this suite is where its own contract is tested — the one data
+ * structure between a 1 kHz sampler and the card.
  *
  * The contract under test is the SPSC ring's, not a container library's: what
  * matters is that a full queue REFUSES rather than overwrites (an overwrite

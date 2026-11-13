@@ -217,29 +217,8 @@ static void test_push_size_mismatch_rejected(void)
 }
 
 // =====================================================================================
-// Queue passthrough: push/pop/popMultiple against the REAL static queue
+// Queue passthrough: push/popMultiple against the REAL static queue
 // =====================================================================================
-
-static void test_push_pop_roundtrip(void)
-{
-    VIBES_TEST("sd.push-pop-roundtrip",
-               "src/IO/IO_SDCard.c#IO_SDCard_pop",
-               "a record given to an SD channel, then taken back, then another take");
-    VIBES_EXPECT("record-unchanged", "the record comes back unchanged");
-    VIBES_EXPECT("second-take-refused", "the second take is refused");
-    test_item_S in = {.a = 42, .b = 99};
-    TEST_ASSERT_TRUE(IO_SDCard_push(IO_SDCARD_CHANNEL_SAMPLE_DATA, &in, TEST_ITEM_SIZE));
-
-    test_item_S out = {0};
-    TEST_ASSERT_TRUE(IO_SDCard_pop(IO_SDCARD_CHANNEL_SAMPLE_DATA, &out));
-    TEST_ASSERT_EQUAL_UINT32(42, out.a);
-    TEST_ASSERT_EQUAL_UINT32(99, out.b);
-
-    // Now empty -> pop fails.
-    TEST_ASSERT_FALSE(IO_SDCard_pop(IO_SDCARD_CHANNEL_SAMPLE_DATA, &out));
-    // Out of range pop -> false.
-    TEST_ASSERT_FALSE(IO_SDCard_pop(IO_SDCARD_CHANNEL_COUNT, &out));
-}
 
 static void test_push_until_full_boundary(void)
 {
@@ -497,10 +476,10 @@ static void test_read_session_fills_queue_and_reports_done(void)
     TEST_ASSERT_FALSE(IO_SDCard_isReadDone(IO_SDCARD_CHANNEL_SAMPLE_DATA));
 
     test_item_S out = {0};
-    TEST_ASSERT_TRUE(IO_SDCard_pop(IO_SDCARD_CHANNEL_SAMPLE_DATA, &out));
+    TEST_ASSERT_EQUAL_UINT32(1u, IO_SDCard_popMultiple(IO_SDCARD_CHANNEL_SAMPLE_DATA, &out, 1u));
     TEST_ASSERT_EQUAL_UINT32(0u, out.a);
     TEST_ASSERT_EQUAL_UINT32(1u, out.b); // seeded b = i*10+1 => for i=0 -> 1
-    TEST_ASSERT_TRUE(IO_SDCard_pop(IO_SDCARD_CHANNEL_SAMPLE_DATA, &out));
+    TEST_ASSERT_EQUAL_UINT32(1u, IO_SDCard_popMultiple(IO_SDCARD_CHANNEL_SAMPLE_DATA, &out, 1u));
     TEST_ASSERT_EQUAL_UINT32(1u, out.a);
     TEST_ASSERT_EQUAL_UINT32(11u, out.b); // i=1 -> 1*10+1
 
@@ -741,7 +720,6 @@ int main(void)
     RUN_TEST(test_isClosed_true_after_init_and_false_for_bad_channel);
     RUN_TEST(test_push_size_mismatch_rejected);
 
-    RUN_TEST(test_push_pop_roundtrip);
     RUN_TEST(test_push_until_full_boundary);
     RUN_TEST(test_popMultiple_counts_and_guards);
 

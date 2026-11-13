@@ -1,5 +1,5 @@
-#ifndef DEV_COGMANAGER_H
-#define DEV_COGMANAGER_H
+#ifndef TEMPLATE_H /* rename to match the new file: <FILE>_H */
+#define TEMPLATE_H
 //
 // Created by Riley McCarthy on 25/04/24.
 //
@@ -26,4 +26,4 @@
 /**********************************************************************
  * End of File
  **********************************************************************/
-#endif /* DEV_COGMANAGER_H */
+#endif /* TEMPLATE_H */

@@ -1,5 +1,5 @@
-#ifndef IO_CRC_H
-#define IO_CRC_H
+#ifndef LIB_UTILITY_H
+#define LIB_UTILITY_H
 //
 // Created by Riley McCarthy on 25/04/24.
 //
@@ -111,7 +111,7 @@ uint32_t lib_utility_muldivmod64_unsigned(uint32_t a, uint32_t b, uint32_t c,
  *
  * Returns true when `(now - start) > period`. Prefer this over
  * `(now - period) > start`, which underflows when `now < period` and can
- * report a spurious expiry (see IO_protocol receive timeout, 86b657ec).
+ * report a spurious expiry.
  * Unsigned wrap of `now` past UINT32_MAX is handled correctly by the
  * modular subtraction.
  */
@@ -119,4 +119,4 @@ bool lib_utility_elapsed_gt(uint32_t now, uint32_t start, uint32_t period);
 /**********************************************************************
  * End of File
  **********************************************************************/
-#endif /* IO_CRC_H */
+#endif /* LIB_UTILITY_H */

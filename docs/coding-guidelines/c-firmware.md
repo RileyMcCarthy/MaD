@@ -59,7 +59,7 @@ The literal template has **only** the `// Created by ...` line; real modules add
 
 > Section banners are a strong convention, not a byte-exact rule. The wording drifts between files (e.g. `src/APP/app_motion.c` uses `Variable Definitions` / `Private Functions` / `Function Definitions`, while `src/APP/app_control.c` uses the template's `Private Variable Definitions` / `Private Function Definitions` / `Public Function Definitions`). Small `Library/` and utility files are lighter still — `src/Library/lib_staticQueue.h` and `src/IO/IO_Debug.h` carry no `// Created by` block and no banners at all. Keep the canonical sections in order for `APP/`/`DEV/`/`IO/` modules; don't bother padding tiny headers.
 
-Header template (`src/template.ch:1`) is the same minus the External Variables / Private Variable / Private Function sections, **wrapped in an include guard** and ending with `#endif /* GUARD */`. Note the template ships with a stale `DEV_COGMANAGER_H` guard — **rename it** to match your new file. Real example `src/APP/app_motion.h:1`:
+Header template (`src/template.ch:1`) is the same minus the External Variables / Private Variable / Private Function sections, **wrapped in an include guard** and ending with `#endif /* GUARD */`. The template's guard is the placeholder `TEMPLATE_H` — **rename it** to match your new file. Real example `src/APP/app_motion.h:1`:
 
 ```c
 #ifndef APP_MOTION_H
@@ -83,7 +83,7 @@ Header template (`src/template.ch:1`) is the same minus the External Variables /
 - Use Doxygen `@brief/@param/@return` on non-trivial public header functions (`src/IO/IO_SDCard.h:88`, `src/HAL/Include/HAL_lock.h:16`).
 
 **Don't**
-- Don't add new `.cx`/`.hx` files. Those are legacy (`src/DEV/Config/dev_nvram_machineProfile.cx`); use `.c`/`.h`.
+- Don't add new `.cx`/`.hx` files. The extension is for the templates only (`src/template.cx` / `src/template.ch`) and is not compiled; use `.c`/`.h`.
 - Don't reorder or drop the section banners in `APP/`/`DEV/`/`IO/` modules — they are how reviewers navigate every file.
 
 ### Include ordering (as practiced)
@@ -111,7 +111,7 @@ Headers are found via per-layer `-Isrc/...` flags in `platformio.ini` (`build_fl
 |------|--------|---------|
 | `APP/` | `app_` | `app_motion.c`, `app_control.c` |
 | `DEV/` | `dev_` (also `watchdog.c`) | `dev_servo.c`, `dev_cogManager.c` |
-| `IO/` | `IO_` | `IO_SDCard.c`, `IO_protocol.c` |
+| `IO/` | `IO_` | `IO_SDCard.c`, `IO_fullDuplexSerial.c` |
 | `Library/` | `lib_` | `lib_staticQueue.c`, `lib_timer.c` |
 | `HAL/Include/` | `HAL_` (also `HW_` for board pin headers) | `HAL_lock.h`, `HAL_GPIO.h`, `HW_pins.h` |
 | Config | as-parent in a `Config/` subfolder | `dev_cogManager_config.c`, `IO_SDCard_config.c` |
