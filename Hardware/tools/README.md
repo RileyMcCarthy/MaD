@@ -1,18 +1,18 @@
 # Hardware AI/EDA tooling
 
 Tooling that lets Claude Code (and you) source parts, design schematics from code,
-and drive KiCad for PCB work. Set up 2026-06-16. macOS / Apple Silicon, KiCad 9.0.6.
+and drive KiCad for PCB work. Written for macOS / Apple Silicon with KiCad 9.
 
 ## What's installed
 
 | Capability | Tool | Status |
 |---|---|---|
 | JLCPCB part search | [`jlc-search`](./jlc-search) (this dir, on PATH) | ✅ live data |
-| Schematic from code | `circuit-synth` (uv tool) — `python-to-kicad`, `kicad-to-python`, `validate-circuit` | ✅ verified |
+| Schematic from code | pcbc — see [`../DS2Addon/pcbc/`](../DS2Addon/pcbc) | used for DS2 Addon rev 2 |
 | PCB layout + live state + DRC/ERC | `kicad-mcp-pro` MCP server via [`../../.mcp.json`](../../.mcp.json) | ✅ read-only by default |
 | `kicad-cli` on PATH | symlink → `/opt/homebrew/bin/kicad-cli` | ✅ 9.0.6 |
 
-Prereq installed: `uv` (Homebrew). circuit-synth installed via `uv tool install circuit-synth`.
+Prereq: `uv` (Homebrew), which runs the MCP server.
 
 ## 1. JLCPCB search — `jlc-search`
 
@@ -24,33 +24,10 @@ jlc-search "10k 0402" --min-stock 500000 --json # raw JSON, for scripting
 Hits the tscircuit JLC mirror (`jlcsearch.tscircuit.com`); no API key. Returns the
 JLCPCB part number (`C…`), Basic/Extended, package, stock, unit price.
 
-> ⚠️ Do **not** use circuit-synth's bundled `jlc-fast` — in v0.12.1 it returns
-> hardcoded **demo data**, not live results (`jlc_web_scraper.py:_get_demo_components`).
-> `jlc-search` exists to replace it.
+## 2. Schematic design from code — pcbc
 
-## 2. Schematic design from code — circuit-synth
-
-Define a circuit in Python; it generates a real KiCad project (`.kicad_pro/.kicad_sch/.net`):
-
-```python
-from circuit_synth import circuit, Component, Net
-
-@circuit(name="divider")
-def divider():
-    vin, vout, gnd = Net('VIN'), Net('VOUT'), Net('GND')
-    r1 = Component(symbol="Device:R", ref="R", value="10k", footprint="Resistor_SMD:R_0402_1005Metric")
-    r2 = Component(symbol="Device:R", ref="R", value="10k", footprint="Resistor_SMD:R_0402_1005Metric")
-    r1[1] += vin; r1[2] += vout
-    r2[1] += vout; r2[2] += gnd
-
-divider().generate_kicad_project("divider_out")
-```
-Also useful: `kicad-to-python <board.kicad_pro>` (import an existing board to Python) and
-`python-to-kicad`. KiCad's symbol/footprint libraries are read from the installed KiCad 9.0.6.
-
-> Note: circuit-synth's "Claude Code agents/commands" are **not** real Claude Code
-> subagents/slash-commands (they're internal Python classes; the PyPI package ships none).
-> Nothing was added to the repo `.claude/`. Just ask Claude to write/run circuit-synth scripts.
+Boards described in code use the pcbc tool; the DS2 Addon rev 2 under
+[`../DS2Addon/pcbc/`](../DS2Addon/pcbc) (`ds2_addon.py`) is the example in this repo.
 
 ## 3. PCB layout + live state — `kicad` MCP server
 
@@ -67,7 +44,7 @@ Configured in [`../../.mcp.json`](../../.mcp.json) as a project-scoped server:
 
 ### To switch which board
 Edit `../../.mcp.json` → `--project-dir` to e.g.
-`/Users/rileymccarthy/Documents/MaD/Hardware/EdgeBoard/KiCad`.
+`<repo>/Hardware/EdgeBoard/KiCad` (an absolute path).
 
 ### To enable editing / autorouting (opt-in, higher risk)
 - **Editing:** change `--mode readonly` → `--mode write`. Recommended: point `--project-dir`
@@ -83,4 +60,4 @@ Edit `../../.mcp.json` → `--project-dir` to e.g.
   on it from another machine.
 - KiCad kept at **9.0.6**. KiCad 10 (`brew install --cask kicad`) replaces 9 in-place and can touch
   board file formats — upgrade deliberately, not mid-task. The IPC API is PCB-only on both 9 and 10
-  (no schematic/eeschema API), which is why schematic design goes through circuit-synth, not the MCP.
+  (no schematic/eeschema API), so the MCP server cannot edit schematics.

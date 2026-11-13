@@ -1,9 +1,0 @@
-EESchema-DOCLIB  Version 2.0
-#
-$CMP NSI50010YT1G
-D Constant Current Regulator 
-K
-F http://www.onsemi.com/pub/Collateral/NSI50010Y-D.PDF
-$ENDCMP
-#
-#End Doc Library

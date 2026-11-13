@@ -1,0 +1,7 @@
+# pcbc build output: regenerated on every build, never design input.
+# Router per-stage checkpoints and failure dumps
+layout/*/routed/[0-9][0-9]_*
+layout/*/routed/unrouted/
+# Generator output and the build-cache fingerprint
+*.gen.py
+*.inputs.json

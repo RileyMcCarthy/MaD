@@ -4109,7 +4109,7 @@ impl<P: PinBus> Machine<P> {
                 self.cogs[cog].clear_after |= 1 << event::PAT;
             }
             Cogatn => {
-                for (target, cog) in self.cogs.iter_mut().enumerate().take(NUM_COGS) {
+                for (target, cog) in self.cogs.iter_mut().enumerate() {
                     if d & (1 << target) != 0 {
                         cog.atn_in = true;
                         cog.touch_events();

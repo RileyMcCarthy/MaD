@@ -1,9 +1,0 @@
-EESchema-DOCLIB  Version 2.0
-#
-$CMP DCP010515DBP
-D Texas Instruments DCP010515DBP, Dual DC-DC Converter, 33mA, +/-14.25  +/-15.75 V, 7-Pin PDIP
-K
-F http://www.ti.com/lit/gpn/dcp010515db
-$ENDCMP
-#
-#End Doc Library
