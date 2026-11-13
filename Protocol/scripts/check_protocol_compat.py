@@ -183,8 +183,9 @@ def compare(old_path, new_path) -> Report:
             (report.fatal if handshake else report.breaking).append(f"{where}: {change}")
             continue
         problems, appended = [], []
-        if a["_tx_node"] != b["_tx_node"]:
-            problems.append(f"{where}: sent by {a['_tx_node']} -> {b['_tx_node']}")
+        sender_a, sender_b = a.get("tx_node", ""), b.get("tx_node", "")
+        if sender_a != sender_b:
+            problems.append(f"{where}: sent by {sender_a} -> {sender_b}")
         for side in ("request", "response"):
             changed, grown = compare_payload(old_data, new_data, a, b, side, where)
             problems += changed
