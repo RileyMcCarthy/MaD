@@ -1,9 +1,9 @@
 /**
  * Unit coverage for density-independent waveform / path metrics.
  *
- * Encodes the CI-geometry fixture from #91: a clean local-density record
- * decimated to ~40 Hz with an idle teardown tail — the combination that used
- * to slide waveformWindow onto the approach ramp and inflate resampledPathMm.
+ * The fixtures are records shaped like the board's: a clean ~600 Hz record,
+ * the same decimated to the ~40 Hz a contended CI runner records, and an idle
+ * teardown tail of a parked gantry wobbling between samples.
  */
 import { describe, expect } from 'vitest';
 import { behaviour } from '@vibes/behaviour';
@@ -20,94 +20,50 @@ const WAVE = {
   amplitudeMm: 3,
   frequencyHz: 2,
   cycles: 3,
-  approachMm: 5,
+  centreMm: 5,
 } as const;
 
 const WAVE_DUR_S = WAVE.cycles / WAVE.frequencyHz; // 1.5 s
 
 type Series = { time: number[]; pos: number[] }; // µs, µm
 
-/** Ideal WAVE-sine-fast record: rest → approach ramp → sine → parked settle. */
-function synthWaveSineFast(sampleHz: number, { idleTailS = 0 } = {}): Series {
+/**
+ * A waveform move as the board records it, in WAVE's geometry: rest at 0, a
+ * straight approach to the bottom of the stroke, a 0.3 s park, whole cycles
+ * rising from rest there about the centre, then parked where the wave ended,
+ * wobbling between samples, for 0.1 s plus `idleTailS`. `amplitudeMm` is the
+ * swing the machine actually made, which a test may set short of WAVE's.
+ */
+function synthWave(
+  sampleHz: number,
+  shape: 'sine' | 'triangle',
+  { idleTailS = 0, amplitudeMm = WAVE.amplitudeMm as number } = {},
+): Series {
   const dtUs = Math.round(1e6 / sampleHz);
+  const bottomUm = (WAVE.centreMm - amplitudeMm) * 1000;
+  const approachStart = 200_000;
+  const waveStart = approachStart + 500_000 + 300_000;
+  const waveEnd = waveStart + WAVE_DUR_S * 1e6;
+  const at = (t: number): number => {
+    if (t < approachStart) return 0;
+    if (t < waveStart - 300_000) return (bottomUm * (t - approachStart)) / 500_000;
+    if (t < waveStart) return bottomUm;
+    if (t <= waveEnd) {
+      // Both rise from the bottom: -cos, and the triangle in phase with it.
+      const theta = 2 * Math.PI * WAVE.frequencyHz * ((t - waveStart) / 1e6);
+      const unit = shape === 'sine' ? -Math.cos(theta) : (2 / Math.PI) * Math.asin(Math.sin(theta - Math.PI / 2));
+      return WAVE.centreMm * 1000 + amplitudeMm * 1000 * unit;
+    }
+    // A wobble big enough that a consecutive-sample "parked" test would read
+    // motion at sparse rates, while staying within 60 µm of the rest position.
+    return bottomUm + ((t / dtUs) % 3) * 30;
+  };
   const time: number[] = [];
   const pos: number[] = [];
-
-  const push = (tUs: number, posUm: number) => {
-    time.push(tUs);
-    pos.push(posUm);
-  };
-
-  // Rest at 0 for 0.2 s.
-  for (let t = 0; t < 200_000; t += dtUs) push(t, 0);
-
-  // Approach ramp: 0 → approachMm over 0.5 s (matches "5 mm approach").
-  const rampStart = 200_000;
-  const rampDur = 500_000;
-  for (let t = rampStart; t < rampStart + rampDur; t += dtUs) {
-    const frac = (t - rampStart) / rampDur;
-    push(t, WAVE.approachMm * 1000 * frac);
+  for (let t = 0; t <= waveEnd + 100_000 + idleTailS * 1e6; t += dtUs) {
+    time.push(t);
+    pos.push(at(t));
   }
-
-  // Sine about the approach base for exactly cycles/frequency seconds.
-  const waveStart = rampStart + rampDur;
-  const waveEnd = waveStart + WAVE_DUR_S * 1e6;
-  const centreUm = WAVE.approachMm * 1000;
-  for (let t = waveStart; t <= waveEnd; t += dtUs) {
-    const tau = (t - waveStart) / 1e6;
-    const y = WAVE.amplitudeMm * Math.sin(2 * Math.PI * WAVE.frequencyHz * tau);
-    push(t, centreUm + y * 1000);
-  }
-
-  // Parked settle at centre, then optional idle teardown tail.
-  const parkEnd = waveEnd + 100_000 + idleTailS * 1e6;
-  for (let t = waveEnd + dtUs; t <= parkEnd; t += dtUs) {
-    // Tiny density-dependent drift so a consecutive-sample "parked" test would
-    // fail at sparse rates the way CI did — displacement from rest stays small.
-    const driftUm = ((t / dtUs) % 3) * 30; // ≤ 60 µm wobble
-    push(t, centreUm + driftUm);
-  }
-
-  return { time, pos };
-}
-
-/** Ideal WAVE-sine-fast geometry but with a triangle wave (same A/f/cycles). */
-function synthWaveTriangleFast(sampleHz: number, { idleTailS = 0 } = {}): Series {
-  const dtUs = Math.round(1e6 / sampleHz);
-  const time: number[] = [];
-  const pos: number[] = [];
-
-  const push = (tUs: number, posUm: number) => {
-    time.push(tUs);
-    pos.push(posUm);
-  };
-
-  for (let t = 0; t < 200_000; t += dtUs) push(t, 0);
-
-  const rampStart = 200_000;
-  const rampDur = 500_000;
-  for (let t = rampStart; t < rampStart + rampDur; t += dtUs) {
-    const frac = (t - rampStart) / rampDur;
-    push(t, WAVE.approachMm * 1000 * frac);
-  }
-
-  const waveStart = rampStart + rampDur;
-  const waveEnd = waveStart + WAVE_DUR_S * 1e6;
-  const centreUm = WAVE.approachMm * 1000;
-  for (let t = waveStart; t <= waveEnd; t += dtUs) {
-    const tau = (t - waveStart) / 1e6;
-    const theta = 2 * Math.PI * WAVE.frequencyHz * tau;
-    // Triangle in phase with sin(θ); peak amplitude = A (Fourier |c3/c1|=1/9).
-    const y = WAVE.amplitudeMm * (2 / Math.PI) * Math.asin(Math.sin(theta));
-    push(t, centreUm + y * 1000);
-  }
-
-  const parkEnd = waveEnd + 100_000 + idleTailS * 1e6;
-  for (let t = waveEnd + dtUs; t <= parkEnd; t += dtUs) {
-    const driftUm = ((t / dtUs) % 3) * 30;
-    push(t, centreUm + driftUm);
-  }
-
   return { time, pos };
 }
 
@@ -194,7 +150,11 @@ function synthMultiSetPath(sampleHz: number, { idleTailS = 0 } = {}): Series {
   return { time, pos };
 }
 
-/** WAVE-sine-small catalog geometry (M10), run the way the program runs it now. */
+/**
+ * WAVE-sine-small catalog geometry (M10), set off from the TOP: the mirror of
+ * the bottom start a positive amplitude makes, approached at the wave's own
+ * peak speed, so the approach is as fast as anything in the wave.
+ */
 const FROM_TOP = { amplitudeMm: 2, frequencyHz: 0.5, cycles: 2, centreMm: 4 } as const;
 /** Where the synthetic record below leaves the top, and returns to it. */
 const FROM_TOP_WAVE_START_S = 0.2 + (FROM_TOP.centreMm + FROM_TOP.amplitudeMm) /
@@ -251,7 +211,7 @@ describe('waveformWindow', () => {
       },
     },
     () => {
-      const dense = synthWaveSineFast(600);
+      const dense = synthWave(600, 'sine');
       const sparse = decimate(dense, 40);
 
       const d = toMmSeries(dense);
@@ -277,13 +237,13 @@ describe('waveformWindow', () => {
     {
       id: 'motion.window-ignores-parked-teardown',
       covers: 'e2e/waveformMetrics.mjs#waveformWindow',
-      given: 'a 40 Hz sine record followed by 2 s of the gantry parked and wobbling at the wave centre',
+      given: 'a 40 Hz sine record followed by 2 s of the gantry parked and wobbling where the wave ended',
       expect: {
         'measures-the-wave': 'the wave window still covers the 1.5 s of sine and spans the 6 mm of the wave',
       },
     },
     () => {
-      const dense = synthWaveSineFast(600);
+      const dense = synthWave(600, 'sine');
       const sparse = decimate(dense, 40);
       const withTail = appendIdleTail(sparse, 2.0, 40); // long idle like CI teardown
 
@@ -293,13 +253,13 @@ describe('waveformWindow', () => {
       expect(span).toBeCloseTo(WAVE_DUR_S, 1);
 
       const excursion = Math.max(...win.p) - Math.min(...win.p);
-      // Must measure the wave (6 mm), not approach+crest (~8 mm) or ramp+wave (~11 mm).
+      // Must measure the wave (6 mm), not the approach plus part of it (up to 8 mm).
       expect(excursion).toBeCloseTo(2 * WAVE.amplitudeMm, 1);
-      expect(excursion).toBeLessThan(WAVE.approachMm + WAVE.amplitudeMm);
+      expect(excursion).toBeLessThan(WAVE.centreMm + WAVE.amplitudeMm);
 
-      // Window mean should sit near the approach base, not near zero (ramp).
+      // The window's mean sits on the wave's centre, not pulled toward the approach.
       const mean = win.p.reduce((a, b) => a + b, 0) / win.p.length;
-      expect(mean).toBeGreaterThan(WAVE.approachMm - 1);
+      expect(mean).toBeGreaterThan(WAVE.centreMm - 1);
     },
   );
 });
@@ -476,7 +436,7 @@ describe('assertSineMatch / assertWaveformExcursion negative controls', () => {
       for (let i = 0; i < 500; i++) {
         const t = i * 5000;
         time.push(t);
-        pos.push((WAVE.approachMm * 1000 * t) / (500 * 5000)); // monotonic 0→5 mm
+        pos.push((WAVE.centreMm * 1000 * t) / (500 * 5000)); // monotonic 0→5 mm
       }
       expect(() =>
         assertSineMatch({ time, pos }, { ...WAVE, amplitudeMm: WAVE.amplitudeMm }, label),
@@ -495,32 +455,8 @@ describe('assertSineMatch / assertWaveformExcursion negative controls', () => {
     },
     () => {
       // Same timing as a good wave, but A = 1.5 mm against commanded 3 mm.
-      const dtUs = 2000;
-      const time: number[] = [];
-      const pos: number[] = [];
-      const centre = WAVE.approachMm * 1000;
-      const halfA = WAVE.amplitudeMm / 2;
-      for (let t = 0; t < 200_000; t += dtUs) {
-        time.push(t);
-        pos.push(0);
-      }
-      for (let t = 200_000; t < 700_000; t += dtUs) {
-        time.push(t);
-        pos.push(centre * ((t - 200_000) / 500_000));
-      }
-      const waveStart = 700_000;
-      for (let t = waveStart; t <= waveStart + WAVE_DUR_S * 1e6; t += dtUs) {
-        const tau = (t - waveStart) / 1e6;
-        time.push(t);
-        pos.push(centre + halfA * 1000 * Math.sin(2 * Math.PI * WAVE.frequencyHz * tau));
-      }
-      for (let t = waveStart + WAVE_DUR_S * 1e6 + dtUs; t < waveStart + WAVE_DUR_S * 1e6 + 200_000; t += dtUs) {
-        time.push(t);
-        pos.push(centre);
-      }
-      expect(() =>
-        assertSineMatch({ time, pos }, { ...WAVE, amplitudeMm: WAVE.amplitudeMm }, label),
-      ).toThrow();
+      const { time, pos } = synthWave(500, 'sine', { amplitudeMm: WAVE.amplitudeMm / 2 });
+      expect(() => assertSineMatch({ time, pos }, WAVE, label)).toThrow();
     },
   );
 
@@ -560,7 +496,7 @@ describe('assertSineMatch / assertWaveformExcursion negative controls', () => {
       },
     },
     () => {
-      const dense = synthWaveSineFast(600);
+      const dense = synthWave(600, 'sine');
       const sparseTail = appendIdleTail(decimate(dense, 40), 2.0, 40);
       expect(() =>
         assertSineMatch(dense, { ...WAVE, amplitudeMm: WAVE.amplitudeMm }, 'dense'),
@@ -585,7 +521,7 @@ describe('assertSineMatch shape gate (triangle vs sine)', () => {
       },
     },
     () => {
-      const tri = synthWaveTriangleFast(600);
+      const tri = synthWave(600, 'triangle');
       expect(() => assertSineMatch(tri, params, 'tri')).toThrow(/sine shape|harmonic|triangle/i);
     },
   );
@@ -600,7 +536,7 @@ describe('assertSineMatch shape gate (triangle vs sine)', () => {
       },
     },
     () => {
-      const tri = appendIdleTail(decimate(synthWaveTriangleFast(600), 40), 1.0, 40);
+      const tri = appendIdleTail(decimate(synthWave(600, 'triangle'), 40), 1.0, 40);
       expect(() => assertSineMatch(tri, params, 'tri-sparse')).toThrow(/sine shape|harmonic|triangle/i);
     },
   );
@@ -615,7 +551,7 @@ describe('assertSineMatch shape gate (triangle vs sine)', () => {
       },
     },
     () => {
-      const sine = synthWaveSineFast(600);
+      const sine = synthWave(600, 'sine');
       expect(() => assertSineMatch(sine, params, 'sine')).not.toThrow();
     },
   );
