@@ -28,7 +28,7 @@ fn trace<P: PinBus>(m: &mut Machine<P>, n: u64) {
             "P2STATE cog=0 pc={:05X} c={} z={} sp={} clk={}",
             c.pc, c.c as u32, c.z as u32, c.sp, c.clocks
         );
-        for reg in &c.regs[..32] {
+        for reg in &c.regs[0..32] {
             print!(" {reg:08X}");
         }
         // PA/PB/PTRA/PTRB and the rest of the special block: CALLPA writes PA
