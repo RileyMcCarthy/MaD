@@ -3,7 +3,7 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useStore } from '@/store/useStore';
 import { getLiveSeries } from '@/store/liveBuffer';
-import { RefLine, fixedDecimals, refLinesPlugin, stableRange } from './uplotRef';
+import { RefLine, cursorTooltipPlugin, fixedDecimals, refLinesPlugin, stableRange } from './uplotRef';
 
 type Coord = 'machine' | 'sample';
 
@@ -64,7 +64,12 @@ export default function LiveCombinedChart({ active }: { active: boolean }) {
         ? [
             { label: 't', value: fixedDecimals(2) },
             { label: 'Position', scale: 'pos', stroke: '#4ea1ff', width: 1.5, points: { show: false }, value: fixedDecimals(3) },
+            // Setpoint: where the trajectory says the gantry should be NOW
+            // (acceleration included), the same signal a test run records.
             { label: 'Setpoint', scale: 'pos', stroke: '#ffb454', width: 1, points: { show: false }, value: fixedDecimals(3) },
+            // Expected: the commands as straight lines at their commanded
+            // speed (domain/expectedPath.ts), to judge how well the machine follows.
+            { label: 'Expected', scale: 'pos', stroke: '#c792ea', width: 1, dash: [5, 4], points: { show: false }, value: fixedDecimals(3) },
             { label: 'Force', scale: 'force', stroke: '#2bd4a7', width: 1.5, points: { show: false }, value: fixedDecimals(3) },
           ]
         : [
@@ -97,7 +102,11 @@ export default function LiveCombinedChart({ active }: { active: boolean }) {
         { scale: 'force', side: 1, stroke: '#8b93a3', label: forceLabel, grid: { show: false }, ticks: { stroke: '#2a2f3a' } },
       ],
       series,
-      plugins: refLines.length ? [refLinesPlugin({ y: refLines })] : [],
+      cursor: { y: false },
+      plugins: [
+        ...(refLines.length ? [refLinesPlugin({ y: refLines })] : []),
+        cursorTooltipPlugin({ xLabel: 'Time (s)' }),
+      ],
     };
 
     const empty = new Float64Array(0);
@@ -133,7 +142,7 @@ export default function LiveCombinedChart({ active }: { active: boolean }) {
           lastT = tEnd;
           const data: uPlot.AlignedData =
             coord === 'machine'
-              ? [s.t, s.machinePosition, s.machineSetpoint, s.machineForce]
+              ? [s.t, s.machinePosition, s.machineCommanded, s.machineExpected, s.machineForce]
               : [s.t, s.samplePosition, s.sampleForce];
           plot.setData(data);
           if (s.length > 0) {

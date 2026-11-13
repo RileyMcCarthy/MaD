@@ -49,14 +49,20 @@ into `src/`, which keeps the app pure (Web Serial + File System Access only).
 
 ## Regenerating documentation screenshots
 
-The screenshots in this site are captured from the live app against the SIL
-emulator. With the SIL stack running (emulator + bridge + dev server, see
-[SIL testing](sil-testing.md)):
+The screenshots in this site are captured from the real UI with no machine and
+no emulator:
 
 ```bash
 cd Software/Control
 npm run docs:screenshots   # → docs/assets/screenshots/*.png
 ```
 
-This reuses the e2e fixtures to seed realistic profiles/runs, walk each screen,
-and write a PNG per screen + key modal.
+The script (`e2e/capture-screenshots.mjs`) starts its own dev server, puts the
+store into each state the docs describe (every firmware banner, fault and
+restriction), and feeds the live buffer from a small in-page carriage model so
+the charts and both calibration panels run their real code. It rewrites the
+whole folder; `SHOT_ONLY=<regex>` re-takes only matching names. Run it after
+any UI change and commit the images with the change.
+
+The shots show what the app looks like in a state. They are not evidence that
+the firmware produces it; that is the e2e suite's job.

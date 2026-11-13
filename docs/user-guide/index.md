@@ -1,31 +1,43 @@
 # User Guide
 
-This guide covers every screen of the **MaD control app**
-([Control](https://rileymccarthy.github.io/MaD/app/)), with screenshots
-captured from the live application.
+One page per screen of **MaD Control**
+([open the app](https://rileymccarthy.github.io/MaD/app/)). New to the machine?
+Start with [Getting Started](../getting-started/index.md).
 
-The app is organised as a sidebar of screens:
+The app is a sidebar of screens:
 
-| Screen | What it's for |
+| Screen | What it's for | Guide |
+|---|---|---|
+| **Connect** | Open the serial link to the machine | [Connecting](connecting.md) |
+| **Control** | Readouts, machine state, manual controls, starting a test, live charts | [Control screen](live-monitoring.md) · [Manual control](manual-control.md) · [Running a test](running-a-test.md) |
+| **Sample profiles** | Specimen dimensions and test limits | [Sample profiles](sample-profiles.md) |
+| **Motion profiles** | The move sequence a test runs | [Motion profiles](motion-profiles.md) |
+| **Test runs** | History and results | [Test history & analysis](test-history-and-analysis.md) |
+| **Firmware** | Installed and recommended firmware; flashing | [Firmware](firmware-and-diagnostics.md) |
+| **About** | App version, documentation links, bug reports | [Reporting a bug](firmware-and-diagnostics.md#reporting-a-bug) |
+| **Settings** | Data folder, machine configuration, calibration | [Settings & data](settings-and-data.md) · [Machine configuration](machine-configuration.md) · [Motor calibration](motor-calibration.md) · [Load cell calibration](load-cell-calibration.md) |
+
+## The status bar
+
+Every screen has the status bar at the top:
+
+![The status bar](../assets/screenshots/status-connected.png)
+
+| Element | Meaning |
 |---|---|
-| [Connect](connecting.md) | Choose a baud rate and connect to the machine over USB |
-| [Live](live-monitoring.md) | Real-time readouts, machine state, and live charts |
-| [Live → controls](manual-control.md) | Enable motion, jog, home, and zero the machine |
-| [Sample profiles](sample-profiles.md) | Create/edit sample profiles (material limits & dimensions) |
-| [Motion profiles](motion-profiles.md) | Build the move sequence a test runs |
-| [Test runs](running-a-test.md) | Run a test and track it in the history table |
-| [Test runs → View](test-history-and-analysis.md) | Download data and analyse a finished run |
-| [Settings](settings-and-data.md) | Data folder + machine configuration |
-| [Firmware](firmware-and-diagnostics.md) | Firmware version and diagnostics export |
+| Dot and label | **Disconnected**, **Connecting…**, or **Connected** with the port and the firmware version |
+| **Responding** / **Not responding** | Whether the firmware has answered in the last moments |
+| **Reconnect** | Shown after the link is lost unexpectedly |
+| **Update ready** | A new version of the app is downloaded; click it while disconnected to apply |
+| **STOP** | Disables all motion immediately. A software stop, not the hardware emergency stop. |
 
-The status bar at the top of every screen shows the connection state, the
-firmware version, a **Responding** indicator, and a global **STOP** control.
+Under it, a banner appears whenever the app and the firmware don't match. See
+[Firmware problems](../troubleshooting/firmware.md).
 
-!!! info "A monitor, not a safety device"
-    Throughout these guides, remember that the **machine is the safety
-    authority**: it has a hardware e-stop and its own sensors, and runs tests
-    autonomously from its SD card. The app monitors and commands the machine, but
-    losing the app never halts a running test. See
-    [the machine](../how-it-works/the-machine.md) for the safety model.
+!!! info "The machine is the safety authority"
+    The machine has a hardware emergency stop and its own sensors, and runs
+    tests from its SD card without the app. Losing the app never stops a
+    running test. See the
+    [safety model](../how-it-works/the-machine.md#safety-model).
 
-If something isn't working, jump to [Troubleshooting](troubleshooting.md).
+Something not working? [Troubleshooting](../troubleshooting/index.md).

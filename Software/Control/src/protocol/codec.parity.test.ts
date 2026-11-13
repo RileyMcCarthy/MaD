@@ -43,6 +43,9 @@ const GOLD = {
   // Derived by hand from the WaveformMove field table in MaDProtocol.yaml
   // (offset/width/scale per field), NOT captured from the encoder -- a golden
   // vector blessed from the thing it guards proves only self-consistency.
+  // Amplitude is signed (-3000..3000 mm, the direction the wave sets off in), so
+  // it is carried offset by 3000 mm in 26 bits.
+  // A chirp's end frequency follows, 27 bits (0 here: no sweep).
   waveform: [0, 208, 134, 202, 1, 18, 122, 96, 12, 0, 0, 0, 0, 0, 0, 0, 230, 3, 0, 0, 0],
 };
 
