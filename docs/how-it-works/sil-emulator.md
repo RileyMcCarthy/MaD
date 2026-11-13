@@ -26,8 +26,7 @@ One system runs it:
 !!! info "This is not a mock"
     The firmware under test is the image you flash. The ISS executes its
     instructions, including `WRPIN` / `DIR` / `OUT`, so a wrong smart-pin mode
-    or a wrong `clkfreq` shows up on the wire. The screenshots in this
-    documentation were produced by driving the app against this emulator.
+    or a wrong `clkfreq` shows up on the wire.
 
 ## embsim — a reusable framework
 

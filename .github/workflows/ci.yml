@@ -27,7 +27,6 @@ on:
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
   # Determine which components need to be built based on changed files
@@ -884,7 +883,8 @@ jobs:
   # ── Phase 0 deterministic gates ───────────────────────────────────────────
   # BLOCKING jobs feed ci-gate. The clippy backlog is cleared, so `sil-rust`
   # now runs rustfmt and clippy `-D warnings` as gating steps — no
-  # `continue-on-error` remains anywhere in this file, and every job that runs
+  # gating step uses `continue-on-error` (only the informational `vibes` job's
+  # artifact downloads do), and every other job that runs
   # (including `control-e2e-boardless`) is in `ci-gate.needs`. Advisory-by-absence is a state a job passes THROUGH on its
   # way to gating, not a resting place.
 
@@ -1358,12 +1358,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Single required status check for branch protection. It aggregates every
-  # build/unit/SIL job: it fails if any of them FAILED or was CANCELLED, and
-  # passes when they all succeeded or were legitimately skipped (e.g. a
-  # docs-only PR skips the component jobs). Mark THIS check — "CI Gate" — as the
-  # required status check on `main` instead of each job, so path-filtered skips
-  # never block a PR.
   # The behaviour ledger: what this change adds, and what stopped holding.
   #
   # Informational, so deliberately NOT in ci-gate.needs. A behaviour that
@@ -1573,6 +1567,12 @@ jobs:
       - name: Lint every claim in the ledger
         run: node Vibes/bin/vibes.mjs lint
 
+  # Single required status check for branch protection. It aggregates every
+  # build/unit/SIL job: it fails if any of them FAILED or was CANCELLED, and
+  # passes when they all succeeded or were legitimately skipped (e.g. a
+  # docs-only PR skips the component jobs). Mark THIS check — "CI Gate" — as the
+  # required status check on `main` instead of each job, so path-filtered skips
+  # never block a PR.
   ci-gate:
     name: CI Gate
     needs:

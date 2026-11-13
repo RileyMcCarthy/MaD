@@ -267,7 +267,6 @@ A component's `on_sense` callback runs on the engine thread. Anything that callb
 
 ### Do / Don't summary
 - **Do** add new third-party deps to `[workspace.dependencies]`, then reference `dep.workspace = true`.
-- **Do** keep `unsafe`/`extern "C"` confined to the platform crate's `ffi.rs`/stubs and guard every channel/pointer.
 - **Do** give every public item a `///` doc, with `# Safety`/`# Panics` where applicable.
 - **Do** run `cargo fmt -p models -p mad-catalog -p mad-runner --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test` locally before pushing — `sil-rust` gates all three.
 - **Don't** edit `Protocol/rust/src/generated/` — regenerate via `make protocol`.

@@ -38,11 +38,13 @@ it interactively:
 
 - **`npm run app`** — opens the app in *your* browser, so the connect flow shows
   Chrome's native port chooser and connects to **real hardware**.
-- **`npm run sil:app`** — launches a Playwright-controlled Chrome with a *fake*
-  `navigator.serial` wired to the **SIL emulator** (no hardware). This is the only
-  way to drive the emulator from the browser; see [SIL testing](sil-testing.md).
+- **`cd SIL && make playground`** — boots the simulated board and opens the app
+  in a headed Chrome held to the **board's clock** (no hardware); see
+  [SIL testing](sil-testing.md). A browser on the host's clock is not a SIL
+  configuration, which is why the older `npm run sil:app` script (a fake
+  `navigator.serial` over a bridge) has no valid backend any more.
 
-The fake serial is injected by the test harness (`e2e/`) — it is **never** baked
+Test-only fakes live in the test harness (`e2e/`) — they are **never** baked
 into `src/`, which keeps the app pure (Web Serial + File System Access only).
 
 ## Regenerating documentation screenshots

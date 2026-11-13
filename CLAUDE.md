@@ -20,10 +20,11 @@ Submodules must be initialized before building: `git submodule update --init --r
 Per-language coding standards (grounded in this codebase, with the exact lint/check rules) live in [`docs/coding-guidelines/`](docs/coding-guidelines/README.md). Read the guide for whatever you're touching before writing code:
 
 - [C / Firmware](docs/coding-guidelines/c-firmware.md) — naming, template/banner layout, MISRA C:2023 + CERT idioms, HAL locking discipline
-- [TypeScript / React](docs/coding-guidelines/typescript.md) — TS/React conventions, ESLint, strict `tsconfig`, and the Web Worker + WASM boundary.
-- [Rust / SIL](docs/coding-guidelines/rust.md) — workspace layout, FFI/`unsafe` HAL boundary, error handling
-- [Python (protocol generator)](docs/coding-guidelines/python.md) — `generate.py` conventions, Jinja2 templates
+- [TypeScript / React](.github/instructions/typescript.instructions.md) — there is no standalone guide; these are the review notes for `Software/Control/src` (what `tsc` and ESLint can't decide). The gate is `npm run verify`.
+- [Rust / SIL](docs/coding-guidelines/rust.md) — workspace layout, where `unsafe` is allowed (the OS edge only — the emulator runs the P2 image, no HAL trampolines), error handling
+- [Python (build hooks + ProtoEmb generator)](docs/coding-guidelines/python.md) — the PlatformIO SCons hooks, and the conventions shared with the ProtoEmb generator (`generate.py`, Jinja2 templates)
 - [Protocol YAML](docs/coding-guidelines/protocol-yaml.md) — `MaDProtocol.yaml` authoring + the regenerate-all-three-targets workflow
+- [Vibes behaviours](docs/coding-guidelines/vibes-behaviours.md) — annotating tests so they publish claims to `behaviours.jsonl`: wording, stable ids, per-language bindings
 
 ## Build & Development Commands
 
@@ -81,7 +82,7 @@ python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yam
 ### Firmware Layered Architecture (strict — each layer only calls the layer below)
 ```
 APP/      — Application logic, state machines (control, motion, monitor, notifications)
-DEV/      — Device drivers (stepper, force gauge, cog manager, NVRAM, watchdog)
+DEV/      — Device drivers (servo, force gauge, cog manager, NVRAM, watchdog)
 IO/       — Protocols & peripheral drivers (serial protocol, G-code, ADS122U04)
 Library/  — Small shared utilities (e.g. timer, static queue) — no upward deps
 HAL/      — Hardware abstraction — `HAL/P2/` on device; headers in `HAL/Include/`
@@ -108,7 +109,7 @@ Frontend-only browser PWA — the browser talks straight to the Propeller 2 over
 - **Main-thread client** (`src/device/session.ts`) ↔ worker via **Comlink**.
 - **State**: **Zustand** store (`src/store/`) + an out-of-React `liveBuffer`; uPlot live charts in `src/ui/`.
 - **Pure logic** (`src/domain/`): G-code build/transform, sample→CSV, proto↔display mapping.
-- **Persistence** (`src/storage/`): `DataStore` over the **File System Access API** (mirrors the desktop data-folder layout).
+- **Persistence** (`src/storage/`): `DataStore` over the **File System Access API**.
 - **Protocol**: generated TS codec in `src/protocol/generated/`; `wasm-pack` output in `src/wasm/`.
 - **Purity rule**: `src/` uses only Web Serial + File System Access. Test-only fakes (SIL serial, OPFS) live in `e2e/`, **never** in `src/`.
 - **Chromium-only**: Web Serial + File System Access are Chrome/Edge desktop only.
@@ -131,7 +132,7 @@ Rust **Cargo workspace** under `SIL/` (see `SIL/Cargo.toml`; members are the MaD
 End-to-end coverage lives with the app it exercises: `Software/Control/e2e/` drives the shipped app against the project's board (`SIL/scripts/board-route.sh`).
 
 ### Communication Protocol
-Firmware ↔ UI communicates over serial (2,000,000 baud on hardware) using the generated protocol from `Protocol/MaDProtocol.yaml`. Two ports, two roles: the protocol runs on the **control port**, the secondary serial P30/P32 (the Edge carrier's J4 through isolator IC2; an FTDI adapter on a P2-EVAL bench), which never resets the chip. **J1** (P62/P63, the Prop Plug / P2-EVAL USB) is the **programming port** only — its adapter's DTR resets the P2 — and carries the debug log. MaD Control connects on the control port and flashes on J1; it reboots the machine with the protocol's `reboot` command. Motion profiles become G-code (`G0`, `G1`, `G4`, `G28`, `G90`, `G91`, `G122`) and are streamed line-by-line.
+Firmware ↔ UI communicates over serial (2,000,000 baud on hardware) using the generated protocol from `Protocol/MaDProtocol.yaml`. Two ports, two roles: the protocol runs on the **control port**, the secondary serial P30/P32 (the Edge carrier's J4 through isolator IC2; an FTDI adapter on a P2-EVAL bench), which never resets the chip. **J1** (P62/P63, the Prop Plug / P2-EVAL USB) is the **programming port** only — its adapter's DTR resets the P2 — and carries the debug log. MaD Control connects on the control port and flashes on J1; it reboots the machine with the protocol's `reboot` command. Motion profiles become G-code (`G0`, `G1`, `G4`, `G28`, `G90`, `G91`, `G122`, `G123`) and are streamed line-by-line.
 
 ## Firmware Naming & File Conventions
 

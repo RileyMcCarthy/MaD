@@ -7,6 +7,12 @@ silicon. This is the promotion step the P4 entry in
 [embsim-improvements.md](embsim-improvements.md) planned for
 ("Spike may live in MaD `SIL/p2core/` then promote").
 
+> **Status (2026-11-11): not done; the plan stands, its citations are dated.**
+> `p2core` and `p2iss` still live in MaD (`SIL/p2core`, `SIL/p2iss`). Since this
+> was scoped, `SIL/MaDSim` and the `mad-emulator` binary retired (MaD #298):
+> the board's kinds are `SIL/mad-catalog` and the command is `SIL/mad-runner`.
+> Read the `MaDSim` paths and line citations below as the tree at the time.
+
 Scoped 2026-09-18 against `feat/iss-rom-serial-flash` (uncommitted WIP included)
 and embsim `origin/main` at `21a25d5`. Revised 2026-09-19: embsim receives P2
 ISS items only, and flashing gets its own embsim test. Revised again the same

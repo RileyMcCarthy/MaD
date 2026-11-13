@@ -152,3 +152,15 @@ nav:
           - Rust / SIL: coding-guidelines/rust.md
           - Python / generator: coding-guidelines/python.md
           - Protocol YAML: coding-guidelines/protocol-yaml.md
+          - Vibes behaviours: coding-guidelines/vibes-behaviours.md
+      - Testing:
+          - Bug-class coverage: dev/bug-class-coverage.md
+          - Bulletproof test plan: dev/bulletproof-test-plan.md
+          - Backend certification: dev/backend-certification.md
+      - Design notes:
+          - The ISS board (what is modelled): dev/sil-iss-components.md
+          - Lossless net transport: dev/sil-lossless-net-transport.md
+          - One drive type: dev/sil-unified-drive.md
+          - embsim improvements: dev/embsim-improvements.md
+          - Moving p2core into embsim: dev/p2core-to-embsim.md
+          - P2 ISS on QEMU: dev/p2-qemu-target-plan.md

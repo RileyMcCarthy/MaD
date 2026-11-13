@@ -41,16 +41,16 @@ Firmware/MaDCore/src/Generated/
 Firmware/MaDCore/src/IO/generated/
 Protocol/rust/src/generated/
 
-# SIL generated artifacts
-SIL/sd/gcode/*.bin
-SIL/sd/test/*.bin
-SIL/sd/test/index.txt
+# Playwright run state / reports
+test-results/
+playwright-report/
 
 # Environment files
 .env
 .env.local
 .env.*.local
-SIL/sd/profile.bin
+# KiCad's automatic project backups
+**/*-backups/
 Hardware/**/jlcpcb/
 
 # Local scratch notes / Claude memories (not committed)

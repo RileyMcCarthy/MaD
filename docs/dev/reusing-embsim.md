@@ -17,7 +17,8 @@ MaD's core is the instruction-set simulator in `SIL/p2iss`. In MaD's project
 files (`SIL/mad.toml` and its twins) it sits in the P2-EC32MB's package as
 the `mad-p2iss` core, the carrier, the add-on and the machine are kinds of
 `SIL/mad-catalog`, and the host is a `host-serial` (a PTY) or a `chrome-cdp`
-(the host's Chrome on the board's clock) on the carrier's debug header `J1`;
+(the host's Chrome on the board's clock) on the carrier's control port `J4`
+(the serial-boot and reflash files put it on the debug header `J1`);
 `embsim run` hands the files to `SIL/mad-runner`, the embsim command over
 MaD's kinds.
 

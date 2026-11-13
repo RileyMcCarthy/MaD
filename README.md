@@ -50,14 +50,19 @@ MaD/
 ├── SIL/                     Software-in-the-loop test rig (Rust workspace)
 │   ├── embsim/              ⎘ submodule → github.com/RileyMcCarthy/embsim (reusable SIL framework)
 │   ├── models/              MaD physics models (gantry, sample, strain gauge)
-│   └── mad-catalog/         MaD's embsim kinds (carrier, add-on, ISS, machine); mad*.toml are the machine's projects
+│   ├── p2core/              The Propeller 2 instruction-set simulator (ISS)
+│   ├── p2iss/               The ISS as an embsim component
+│   ├── mad-catalog/         MaD's embsim kinds (carrier, add-on, ISS, machine); mad*.toml are the machine's projects
+│   └── mad-runner/          The embsim command over MaD's kinds
+├── Vibes/                   ⎘ submodule → github.com/RileyMcCarthy/vibes (behaviour ledger tool; the ledger is behaviours.jsonl)
 ├── Hardware/                KiCad PCB designs (EdgeBoard, DS2Addon)
 └── docs/  +  mkdocs.yml     The documentation site
 ```
 
-> Two components are **git submodules** (they are standalone open-source
-> libraries): [`Protocol/ProtoEmb`](https://github.com/RileyMcCarthy/protoemb)
-> and [`SIL/embsim`](https://github.com/RileyMcCarthy/embsim). Clone with
+> Three components are **git submodules** (they are standalone open-source
+> libraries): [`Protocol/ProtoEmb`](https://github.com/RileyMcCarthy/protoemb),
+> [`SIL/embsim`](https://github.com/RileyMcCarthy/embsim) and
+> [`Vibes`](https://github.com/RileyMcCarthy/vibes). Clone with
 > `git clone --recurse-submodules`, or run
 > `git submodule update --init --recursive` in an existing checkout.
 
@@ -126,7 +131,7 @@ python3 ./Protocol/ProtoEmb/core/generate.py --schema ./Protocol/MaDProtocol.yam
 | Learn every screen | [User guide](https://rileymccarthy.github.io/MaD/user-guide/) |
 | Understand the design | [How it works](https://rileymccarthy.github.io/MaD/how-it-works/) |
 | Build & contribute | [Developer guide](https://rileymccarthy.github.io/MaD/dev/) |
-| Look up the protocol / G-code / formats | [Reference](https://rileymccarthy.github.io/MaD/reference/) |
+| Look up the protocol / G-code / formats | [Protocol messages](https://rileymccarthy.github.io/MaD/dev/protocol-messages/) · [G-code](https://rileymccarthy.github.io/MaD/dev/gcode/) · [File formats](https://rileymccarthy.github.io/MaD/user-guide/file-formats/) |
 
 To work on the docs locally:
 ```bash

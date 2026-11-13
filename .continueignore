@@ -7,13 +7,10 @@ target/
 **/target/
 .pio/
 **/.pio/
-release/build/
-release/app/dist/
 **/dist/
 **/build/
 
 # SIL artifacts
-SIL/playwright-report/
 SIL/sd/
 
 # Firmware generated/build
@@ -21,9 +18,11 @@ Firmware/MaDCore/src/Generated/
 Firmware/MaDCore/.pio/
 
 # Software generated
+Software/Control/src/protocol/generated/
+Software/Control/src/wasm/
 
 # Rust generated protocol
-SIL/embsim/peripherals/src/generated/
+Protocol/rust/src/generated/
 
 # Hardware backups & large binaries
 **/*.kicad_pcb-bak

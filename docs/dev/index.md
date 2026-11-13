@@ -39,9 +39,10 @@ Rust, `wasm-pack`, and Python are only needed if you're building the app or
 running SIL; PlatformIO only if you're building firmware.
 
 !!! note "Initialize the submodules first"
-    Two components are git submodules: [`Protocol/ProtoEmb`](https://github.com/RileyMcCarthy/protoemb)
-    (protocol codegen + runtime) and [`SIL/embsim`](https://github.com/RileyMcCarthy/embsim)
-    (the emulator framework). Every fast path below needs them:
+    Three components are git submodules: [`Protocol/ProtoEmb`](https://github.com/RileyMcCarthy/protoemb)
+    (protocol codegen + runtime), [`SIL/embsim`](https://github.com/RileyMcCarthy/embsim)
+    (the emulator framework) and [`Vibes`](https://github.com/RileyMcCarthy/vibes)
+    (the behaviour ledger tool). Every fast path below needs them:
 
     ```bash
     git clone --recurse-submodules https://github.com/RileyMcCarthy/MaD.git

@@ -7,7 +7,7 @@ applyTo: "**"
 When reviewing pull requests for this repository:
 
 1. **Docs** — If behaviour, APIs, protocol, G-code, build commands, or architecture
-   changed without corresponding docs (`Claude.md`, `docs/`, coding guidelines), leave a
+   changed without corresponding docs (`CLAUDE.md`, `docs/`, coding guidelines), leave a
    comment naming the file(s) to update.
 
 2. **Tests in this PR** — Behaviour changes need matching coverage (Unity / Vitest /
