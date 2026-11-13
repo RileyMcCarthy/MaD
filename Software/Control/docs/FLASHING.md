@@ -77,14 +77,13 @@ refuses to guess when two granted ports share the remembered USB id
 (`matchControlPort` in `src/device/controlPort.ts`), since the wrong guess
 resets the machine.
 
-Upgrading a machine from 0.14 or earlier, whose protocol is still on J1: the
-app is connected over the programming port, so the Firmware page offers no
-port to flash and refuses that one ("MaD Control is connected through this
-port; disconnect, then flash"). Disconnect on the Connect page, flash over J1
-from the Firmware page while disconnected, rewire the bench's FTDI adapter to
-P30 (adapter TX) / P32 (adapter RX), then connect on that adapter. The user
-guide has the same steps (`docs/user-guide/firmware-and-diagnostics.md`,
-"Machines still on firmware 0.14 or earlier").
+When the only granted port is the one the control session holds, the Firmware
+page offers no programming port and says so: "MaD Control is connected through
+the only serial device. Choose the programming port (the Prop Plug on J1 or the
+P2-EVAL USB), or disconnect on the Connect page to flash through this one."
+Flashing that held port is refused with `FLASH_ON_CONTROL_PORT`
+(`src/firmware/flashWithSession.ts`), which tells the operator to disconnect
+first and flash over the programming port.
 
 Each release carries one image, `MaD-Firmware-<version>.bin`
 (`pickFirmwareAsset` in `src/firmware/release.ts`). The Firmware screen

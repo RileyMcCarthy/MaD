@@ -28,7 +28,7 @@ fn main() {
         }
     }
     println!("after {steps} steps: pc={:05X} c={} z={}", m.cogs[0].pc, m.cogs[0].c as u32, m.cogs[0].z as u32);
-    for i in from..=to {
-        println!("  cog[${i:03X}] = {:08X}", m.cogs[0].regs[i]);
+    for (i, reg) in m.cogs[0].regs.iter().enumerate().take(to + 1).skip(from) {
+        println!("  cog[${i:03X}] = {reg:08X}");
     }
 }
